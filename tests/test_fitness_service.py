@@ -1,6 +1,7 @@
 """Tests for the Garmin Fitness probe service."""
 
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from homeassistant.core import SupportsResponse
@@ -85,6 +86,21 @@ async def test_fitness_probe_service_allows_coverage_only() -> None:
     probe.assert_awaited_once()
     assert probe.await_args.kwargs["user_max_hr"] is None
     assert probe.await_args.kwargs["sex"] is None
+
+
+def test_fitness_probe_action_exposes_trimp_parameters() -> None:
+    services_yaml = (
+        Path(__file__).parents[1]
+        / "custom_components"
+        / "garmin_connect"
+        / "services.yaml"
+    ).read_text(encoding="utf-8")
+    fitness_probe = services_yaml.split("\nfitness_probe:\n", maxsplit=1)[1]
+
+    assert "\n    max_hr:\n" in fitness_probe
+    assert "\n    sex:\n" in fitness_probe
+    assert "Maximum heart rate used for Banister TRIMP comparison." in fitness_probe
+    assert "Sex-specific Banister TRIMP coefficient" in fitness_probe
 
 
 async def test_fitness_probe_service_registers_only_once() -> None:
