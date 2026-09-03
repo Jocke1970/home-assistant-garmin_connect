@@ -110,7 +110,7 @@ def _migrate_entity_unique_ids(
     entry: GarminConnectConfigEntry,
     old_prefix: str,
 ) -> None:
-    """Rewrite entity unique_ids from v1 (email_key) to v2 (entry_id_key).
+    """Rewrite entity unique_ids from v1 (email_key) to v2 (entry_id prefix).
 
     Also applies key renames so the entity registry keeps existing entity_ids
     intact (e.g. sensor.total_steps stays sensor.total_steps).
@@ -126,6 +126,7 @@ def _migrate_entity_unique_ids(
 
         old_key = old_uid[len(old_prefix) + 1 :]
 
+        # Determine the new key: renamed, dropped, or unchanged.
         if old_key in _V1_KEY_RENAMES:
             new_key = _V1_KEY_RENAMES[old_key]
             if new_key is None:
@@ -146,7 +147,10 @@ def _migrate_entity_unique_ids(
         try:
             registry.async_update_entity(entity.entity_id, new_unique_id=new_uid)
             _LOGGER.debug(
-                "Migrated %s unique_id: %s -> %s", entity.entity_id, old_uid, new_uid
+                "Migrated %s unique_id: %s -> %s",
+                entity.entity_id,
+                old_uid,
+                new_uid,
             )
         except ValueError:
             _LOGGER.warning(
@@ -160,6 +164,8 @@ def _migrate_entity_unique_ids(
 async def async_setup_entry(hass: HomeAssistant, entry: GarminConnectConfigEntry) -> bool:
     """Set up Garmin Connect from a config entry."""
     if CONF_TOKEN not in entry.data:
+        # Migration from v1 bumps version and starts reauth but setup still runs.
+        # Without valid DI tokens there's nothing to set up — reauth will fix it.
         raise ConfigEntryAuthFailed(
             f"Garmin Connect credentials for {entry.title} need to be re-authenticated"
         )
@@ -249,6 +255,7 @@ async def async_options_update_listener(
     ):
         coord.set_update_interval(update_interval)
 
+    # Update the snapshot after applying changes.
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = dict(current_options)
 
 
