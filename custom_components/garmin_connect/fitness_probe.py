@@ -84,11 +84,11 @@ def _activity_type(activity: dict[str, Any]) -> str:
 
 def _activity_id(activity: dict[str, Any]) -> int | None:
     value = activity.get("activityId")
-    if isinstance(value, bool):
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
         return None
     try:
         result = int(value)
-    except (TypeError, ValueError):
+    except ValueError:
         return None
     return result if result > 0 else None
 
