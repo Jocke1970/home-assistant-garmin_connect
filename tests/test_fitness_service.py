@@ -37,7 +37,7 @@ def _handler(hass: MagicMock):
 
 async def test_fitness_probe_service_uses_existing_client_and_returns_response() -> None:
     hass = _mock_hass()
-    expected = {"probe_version": 1, "activities": {"total": 1}}
+    expected = {"probe_version": 3, "activities": {"total": 1}}
 
     with (
         patch(
@@ -51,16 +51,40 @@ async def test_fitness_probe_service_uses_existing_client_and_returns_response()
         await async_setup_fitness_probe_service(hass)
 
         call = MagicMock()
-        call.data = {"days": 90}
+        call.data = {"days": 90, "max_hr": 175.0, "sex": "male"}
         result = await _handler(hass)(call)
 
     client = hass.config_entries.async_entries.return_value[0].runtime_data.core.client
-    probe.assert_awaited_once_with(client, days=90, end_date=datetime(2026, 9, 3).date())
+    probe.assert_awaited_once_with(
+        client,
+        days=90,
+        end_date=datetime(2026, 9, 3).date(),
+        user_max_hr=175.0,
+        sex="male",
+    )
     assert result == expected
 
     register_call = hass.services.async_register.call_args
     assert register_call.args[:2] == (DOMAIN, SERVICE_FITNESS_PROBE)
     assert register_call.kwargs["supports_response"] is SupportsResponse.ONLY
+
+
+async def test_fitness_probe_service_allows_coverage_only() -> None:
+    hass = _mock_hass()
+
+    with patch(
+        "custom_components.garmin_connect.fitness_service.build_fitness_probe",
+        new_callable=AsyncMock,
+        return_value={"probe_version": 3},
+    ) as probe:
+        await async_setup_fitness_probe_service(hass)
+        call = MagicMock()
+        call.data = {"days": 30}
+        await _handler(hass)(call)
+
+    probe.assert_awaited_once()
+    assert probe.await_args.kwargs["user_max_hr"] is None
+    assert probe.await_args.kwargs["sex"] is None
 
 
 async def test_fitness_probe_service_registers_only_once() -> None:
