@@ -48,7 +48,7 @@ def _configure_resting_hr(client: AsyncMock, values: dict[str, float]) -> None:
 
 
 @pytest.mark.asyncio
-async def test_probe_reports_latest_rowing_and_coverage() -> None:
+async def test_probe_reports_trimp_comparison_and_series_readiness() -> None:
     client = AsyncMock()
     client.get_activities.side_effect = [
         [
@@ -74,9 +74,13 @@ async def test_probe_reports_latest_rowing_and_coverage() -> None:
         client,
         days=30,
         end_date=date(2026, 9, 3),
+        user_max_hr=175,
+        sex="male",
     )
 
-    assert result["probe_version"] == 2
+    assert result["probe_version"] == 3
+    assert result["algorithm_version"] == 1
+    assert result["configuration"] == {"max_hr": 175, "sex": "male"}
     assert result["activities"] == {
         "total": 3,
         "activity_days": 3,
@@ -87,11 +91,18 @@ async def test_probe_reports_latest_rowing_and_coverage() -> None:
     assert result["trimp_activity_inputs"]["coverage_percent"] == 100.0
     assert result["resting_hr"]["activity_day_coverage_percent"] == 100.0
     assert result["trimp_context"]["coverage_percent"] == 100.0
+    assert result["trimp_context"]["remaining_requirements"] == []
     assert result["latest_activity"]["activity_type"] == "indoor_rowing"
     assert result["latest_activity"]["garmin_training_load"] == 18.4
     assert result["latest_activity"]["duration_minutes"] == 15.0
     assert result["latest_activity"]["resting_hr"] == 56
+    assert result["latest_activity"]["trimp"] == pytest.approx(28.999)
     assert result["latest_activity"]["trimp_context_ready"] is True
+    assert result["comparison"]["paired_activity_days"] == 2
+    assert result["training_series"]["garmin"]["ready"] is False
+    assert result["training_series"]["garmin"]["blocker_dates"] == ["2026-08-20"]
+    assert result["training_series"]["trimp"]["ready"] is True
+    assert len(result["training_series"]["trimp"]["points"]) == 30
 
 
 @pytest.mark.asyncio
@@ -160,6 +171,14 @@ async def test_probe_marks_missing_resting_hr_as_incomplete_trimp_context() -> N
     assert result["trimp_context"]["first_incomplete_dates"] == ["2026-09-03"]
     assert result["latest_activity"]["resting_hr"] is None
     assert result["latest_activity"]["trimp_context_ready"] is False
+
+
+@pytest.mark.asyncio
+async def test_probe_rejects_partial_trimp_configuration() -> None:
+    client = AsyncMock()
+
+    with pytest.raises(ValueError, match="provided together"):
+        await build_fitness_probe(client, days=30, user_max_hr=175)
 
 
 @pytest.mark.asyncio
