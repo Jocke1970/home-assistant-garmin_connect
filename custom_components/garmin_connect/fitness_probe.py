@@ -11,12 +11,17 @@ import math
 from collections import defaultdict
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
+from urllib.parse import quote
 
 from ha_garmin import GarminClient
+from ha_garmin.const import GARMIN_CONNECT_API
 
 _PAGE_SIZE = 100
 _MAX_PAGES = 50
 _RECENT_ACTIVITY_LIMIT = 10
+_USER_STATS_DAILY_URL = f"{GARMIN_CONNECT_API}/userstats-service/wellness/daily"
+_RESTING_HR_METRIC_ID = 60
+_RESTING_HR_METRIC_KEY = "WELLNESS_RESTING_HEART_RATE"
 
 
 def _number(value: Any) -> float | None:
@@ -93,6 +98,14 @@ def _activity_id(activity: dict[str, Any]) -> int | None:
     return result if result > 0 else None
 
 
+def _trimp_activity_inputs_ready(activity: dict[str, Any]) -> bool:
+    """Return whether activity-level inputs required by TRIMP are present."""
+    return (
+        _number(activity.get("averageHR")) is not None
+        and (_number(activity.get("duration")) or 0) > 0
+    )
+
+
 def _richness(activity: dict[str, Any]) -> int:
     """Score fields useful to Training calculations for duplicate selection."""
     fields = (
@@ -134,7 +147,9 @@ def _sort_key(activity: dict[str, Any]) -> tuple[date, datetime]:
     return activity_date, timestamp.replace(tzinfo=None)
 
 
-def _compact_activity(activity: dict[str, Any]) -> dict[str, Any]:
+def _compact_activity(
+    activity: dict[str, Any], resting_hr: dict[date, float]
+) -> dict[str, Any]:
     """Return only Training-relevant fields; never include route/location data."""
     activity_date = _activity_date(activity)
     timestamp = _activity_timestamp(activity)
@@ -142,6 +157,8 @@ def _compact_activity(activity: dict[str, Any]) -> dict[str, Any]:
     training_load = _number(activity.get("activityTrainingLoad"))
     avg_hr = _number(activity.get("averageHR"))
     max_hr = _number(activity.get("maxHR"))
+    resting_hr_for_day = resting_hr.get(activity_date) if activity_date else None
+    activity_inputs_ready = _trimp_activity_inputs_ready(activity)
     return {
         "activity_id": _activity_id(activity),
         "name": activity.get("activityName"),
@@ -151,12 +168,12 @@ def _compact_activity(activity: dict[str, Any]) -> dict[str, Any]:
         "duration_minutes": round(duration / 60.0, 2) if duration is not None else None,
         "average_hr": avg_hr,
         "max_hr": max_hr,
+        "resting_hr": resting_hr_for_day,
         "garmin_training_load": training_load,
         "aerobic_training_effect": _number(activity.get("aerobicTrainingEffect")),
         "anaerobic_training_effect": _number(activity.get("anaerobicTrainingEffect")),
-        "trimp_activity_inputs_ready": avg_hr is not None
-        and duration is not None
-        and duration > 0,
+        "trimp_activity_inputs_ready": activity_inputs_ready,
+        "trimp_context_ready": activity_inputs_ready and resting_hr_for_day is not None,
     }
 
 
@@ -205,6 +222,63 @@ async def _fetch_activity_window(
     return deduplicated, requests
 
 
+async def _fetch_resting_hr_window(
+    client: GarminClient,
+    start_date: date,
+    end_date: date,
+) -> dict[date, float]:
+    """Fetch strict resting-HR measurements for the whole probe window."""
+    profile = await client.get_user_profile()
+    display_name = getattr(profile, "display_name", None)
+    if not isinstance(display_name, str) or not display_name:
+        raise RuntimeError("Garmin profile did not expose a valid display name")
+
+    url = f"{_USER_STATS_DAILY_URL}/{quote(display_name, safe='')}"
+    data = await client._request(
+        "GET",
+        url,
+        params={
+            "fromDate": start_date.isoformat(),
+            "untilDate": end_date.isoformat(),
+            "metricId": _RESTING_HR_METRIC_ID,
+        },
+    )
+    if not data:
+        return {}
+    if not isinstance(data, dict):
+        raise RuntimeError("Unexpected Garmin resting-HR history response")
+
+    all_metrics = data.get("allMetrics")
+    metrics_map = (
+        all_metrics.get("metricsMap") if isinstance(all_metrics, dict) else None
+    )
+    raw_values = (
+        metrics_map.get(_RESTING_HR_METRIC_KEY)
+        if isinstance(metrics_map, dict)
+        else None
+    )
+    if raw_values is None:
+        return {}
+    if not isinstance(raw_values, list):
+        raise RuntimeError("Unexpected Garmin resting-HR metric response")
+
+    result: dict[date, float] = {}
+    for item in raw_values:
+        if not isinstance(item, dict):
+            continue
+        raw_date = item.get("calendarDate")
+        value = _number(item.get("value"))
+        if not isinstance(raw_date, str) or value is None or value <= 0:
+            continue
+        try:
+            measurement_date = date.fromisoformat(raw_date[:10])
+        except ValueError:
+            continue
+        if start_date <= measurement_date <= end_date:
+            result[measurement_date] = value
+    return result
+
+
 async def build_fitness_probe(
     client: GarminClient,
     days: int = 90,
@@ -218,16 +292,13 @@ async def build_fitness_probe(
     end_date = end_date or date.today()
     start_date = end_date - timedelta(days=days - 1)
     activities, request_count = await _fetch_activity_window(client, start_date, end_date)
+    resting_hr = await _fetch_resting_hr_window(client, start_date, end_date)
 
     total = len(activities)
     garmin_with_load = sum(
         _number(item.get("activityTrainingLoad")) is not None for item in activities
     )
-    trimp_ready = sum(
-        _number(item.get("averageHR")) is not None
-        and (_number(item.get("duration")) or 0) > 0
-        for item in activities
-    )
+    trimp_ready = sum(_trimp_activity_inputs_ready(item) for item in activities)
 
     by_type: dict[str, list[int]] = defaultdict(lambda: [0, 0, 0])
     by_day: dict[date, list[dict[str, Any]]] = defaultdict(list)
@@ -236,10 +307,7 @@ async def build_fitness_probe(
         counts[0] += 1
         if _number(item.get("activityTrainingLoad")) is not None:
             counts[1] += 1
-        if (
-            _number(item.get("averageHR")) is not None
-            and (_number(item.get("duration")) or 0) > 0
-        ):
+        if _trimp_activity_inputs_ready(item):
             counts[2] += 1
         item_date = _activity_date(item)
         if item_date is not None:
@@ -259,6 +327,21 @@ async def build_fitness_probe(
         reverse=True,
     )
 
+    activity_days_with_resting_hr = sum(day in resting_hr for day in by_day)
+    complete_trimp_days = sum(
+        day in resting_hr and all(_trimp_activity_inputs_ready(item) for item in items)
+        for day, items in by_day.items()
+    )
+    incomplete_trimp_days = sorted(
+        (
+            day
+            for day, items in by_day.items()
+            if day not in resting_hr
+            or any(not _trimp_activity_inputs_ready(item) for item in items)
+        ),
+        reverse=True,
+    )
+
     by_type_rows = []
     for activity_type, (type_total, type_garmin, type_trimp) in sorted(by_type.items()):
         by_type_rows.append(
@@ -272,9 +355,12 @@ async def build_fitness_probe(
             }
         )
 
-    compact = [_compact_activity(item) for item in activities[:_RECENT_ACTIVITY_LIMIT]]
+    compact = [
+        _compact_activity(item, resting_hr)
+        for item in activities[:_RECENT_ACTIVITY_LIMIT]
+    ]
     return {
-        "probe_version": 1,
+        "probe_version": 2,
         "read_only": True,
         "window": {
             "days": days,
@@ -301,7 +387,28 @@ async def build_fitness_probe(
             "eligible_activities": trimp_ready,
             "ineligible_activities": total - trimp_ready,
             "coverage_percent": round(trimp_ready / total * 100.0, 1) if total else 0.0,
-            "note": "Full TRIMP also requires resting HR plus explicit max HR and sex.",
+        },
+        "resting_hr": {
+            "measurement_days": len(resting_hr),
+            "activity_days_with_measurement": activity_days_with_resting_hr,
+            "activity_day_coverage_percent": (
+                round(activity_days_with_resting_hr / activity_days * 100.0, 1)
+                if activity_days
+                else 0.0
+            ),
+        },
+        "trimp_context": {
+            "complete_activity_days": complete_trimp_days,
+            "incomplete_activity_days": len(incomplete_trimp_days),
+            "coverage_percent": (
+                round(complete_trimp_days / activity_days * 100.0, 1)
+                if activity_days
+                else 0.0
+            ),
+            "first_incomplete_dates": [
+                item.isoformat() for item in incomplete_trimp_days[:10]
+            ],
+            "remaining_requirements": ["explicit max_hr", "sex"],
         },
         "by_activity_type": by_type_rows,
         "latest_activity": compact[0] if compact else None,
