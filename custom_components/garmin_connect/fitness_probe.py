@@ -136,6 +136,7 @@ def _sort_key(activity: dict[str, Any]) -> tuple[date, datetime]:
 
 def _compact_activity(activity: dict[str, Any]) -> dict[str, Any]:
     """Return only Training-relevant fields; never include route/location data."""
+    activity_date = _activity_date(activity)
     timestamp = _activity_timestamp(activity)
     duration = _number(activity.get("duration"))
     training_load = _number(activity.get("activityTrainingLoad"))
@@ -145,7 +146,7 @@ def _compact_activity(activity: dict[str, Any]) -> dict[str, Any]:
         "activity_id": _activity_id(activity),
         "name": activity.get("activityName"),
         "activity_type": _activity_type(activity),
-        "date": (_activity_date(activity).isoformat() if _activity_date(activity) else None),
+        "date": activity_date.isoformat() if activity_date else None,
         "start_time": timestamp.isoformat() if timestamp else None,
         "duration_minutes": round(duration / 60.0, 2) if duration is not None else None,
         "average_hr": avg_hr,
@@ -219,7 +220,9 @@ async def build_fitness_probe(
     activities, request_count = await _fetch_activity_window(client, start_date, end_date)
 
     total = len(activities)
-    garmin_with_load = sum(_number(item.get("activityTrainingLoad")) is not None for item in activities)
+    garmin_with_load = sum(
+        _number(item.get("activityTrainingLoad")) is not None for item in activities
+    )
     trimp_ready = sum(
         _number(item.get("averageHR")) is not None
         and (_number(item.get("duration")) or 0) > 0
@@ -233,7 +236,10 @@ async def build_fitness_probe(
         counts[0] += 1
         if _number(item.get("activityTrainingLoad")) is not None:
             counts[1] += 1
-        if _number(item.get("averageHR")) is not None and (_number(item.get("duration")) or 0) > 0:
+        if (
+            _number(item.get("averageHR")) is not None
+            and (_number(item.get("duration")) or 0) > 0
+        ):
             counts[2] += 1
         item_date = _activity_date(item)
         if item_date is not None:
@@ -284,7 +290,9 @@ async def build_fitness_probe(
         "garmin_load": {
             "activities_with_load": garmin_with_load,
             "activities_without_load": total - garmin_with_load,
-            "coverage_percent": round(garmin_with_load / total * 100.0, 1) if total else 0.0,
+            "coverage_percent": (
+                round(garmin_with_load / total * 100.0, 1) if total else 0.0
+            ),
             "complete_activity_days": complete_garmin_days,
             "incomplete_activity_days": len(incomplete_days),
             "first_incomplete_dates": [item.isoformat() for item in incomplete_days[:10]],
