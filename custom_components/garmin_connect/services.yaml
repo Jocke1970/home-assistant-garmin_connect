@@ -453,3 +453,22 @@ fitness_probe:
           max: 365
           step: 1
           unit_of_measurement: days
+    max_hr:
+      name: Maximum heart rate
+      description: Maximum heart rate used for Banister TRIMP comparison.
+      example: 175
+      selector:
+        number:
+          min: 100
+          max: 250
+          step: 1
+          unit_of_measurement: bpm
+          mode: box
+    sex:
+      name: Sex
+      description: Sex-specific Banister TRIMP coefficient used for the comparison.
+      selector:
+        select:
+          options:
+            - male
+            - female
