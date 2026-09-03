@@ -13,6 +13,7 @@ from homeassistant.core import (
 )
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
 from .fitness_probe import build_fitness_probe
@@ -40,7 +41,11 @@ async def async_setup_fitness_probe_service(hass: HomeAssistant) -> None:
         """Fetch and return Garmin Fitness activity-load diagnostics."""
         client = _get_client(hass, entity_id=call.data.get("entity_id"))
         try:
-            return await build_fitness_probe(client, days=call.data["days"])
+            return await build_fitness_probe(
+                client,
+                days=call.data["days"],
+                end_date=dt_util.now().date(),
+            )
         except (GarminConnectError, ClientError, RuntimeError, ValueError) as err:
             raise HomeAssistantError(f"Garmin Fitness probe failed: {err}") from err
 
