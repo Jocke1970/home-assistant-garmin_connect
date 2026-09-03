@@ -34,6 +34,10 @@ from .coordinator import (
     NutritionCoordinator,
     TrainingCoordinator,
 )
+from .fitness_service import (
+    async_setup_fitness_probe_service,
+    async_unload_fitness_probe_service,
+)
 from .services import async_setup_services, async_unload_services
 
 _LOGGER = logging.getLogger(__name__)
@@ -122,7 +126,6 @@ def _migrate_entity_unique_ids(
 
         old_key = old_uid[len(old_prefix) + 1 :]
 
-        # Determine the new key: renamed, dropped, or unchanged.
         if old_key in _V1_KEY_RENAMES:
             new_key = _V1_KEY_RENAMES[old_key]
             if new_key is None:
@@ -143,10 +146,7 @@ def _migrate_entity_unique_ids(
         try:
             registry.async_update_entity(entity.entity_id, new_unique_id=new_uid)
             _LOGGER.debug(
-                "Migrated %s unique_id: %s -> %s",
-                entity.entity_id,
-                old_uid,
-                new_uid,
+                "Migrated %s unique_id: %s -> %s", entity.entity_id, old_uid, new_uid
             )
         except ValueError:
             _LOGGER.warning(
@@ -160,8 +160,6 @@ def _migrate_entity_unique_ids(
 async def async_setup_entry(hass: HomeAssistant, entry: GarminConnectConfigEntry) -> bool:
     """Set up Garmin Connect from a config entry."""
     if CONF_TOKEN not in entry.data:
-        # Migration from v1 bumps version and starts reauth but setup still runs.
-        # Without valid DI tokens there's nothing to set up — reauth will fix it.
         raise ConfigEntryAuthFailed(
             f"Garmin Connect credentials for {entry.title} need to be re-authenticated"
         )
@@ -212,6 +210,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: GarminConnectConfigEntry
 
     if not hass.services.has_service(DOMAIN, "set_active_gear"):
         await async_setup_services(hass)
+    await async_setup_fitness_probe_service(hass)
 
     entry.async_on_unload(entry.add_update_listener(async_options_update_listener))
 
@@ -250,7 +249,6 @@ async def async_options_update_listener(
     ):
         coord.set_update_interval(update_interval)
 
-    # Update the snapshot after applying changes.
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = dict(current_options)
 
 
@@ -263,5 +261,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: GarminConnectConfigEntr
 
     if unload_ok and len(hass.config_entries.async_entries(DOMAIN)) == 1:
         await async_unload_services(hass)
+        await async_unload_fitness_probe_service(hass)
 
     return unload_ok
