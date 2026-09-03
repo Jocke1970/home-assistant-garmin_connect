@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 from collections import defaultdict
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote
 
 from ha_garmin import GarminClient
@@ -22,6 +22,15 @@ _RECENT_ACTIVITY_LIMIT = 10
 _USER_STATS_DAILY_URL = f"{GARMIN_CONNECT_API}/userstats-service/wellness/daily"
 _RESTING_HR_METRIC_ID = 60
 _RESTING_HR_METRIC_KEY = "WELLNESS_RESTING_HEART_RATE"
+_ALGORITHM_VERSION = 1
+_CTL_PERIOD_DAYS = 42
+_ATL_PERIOD_DAYS = 7
+_CTL_ALPHA = 2.0 / (_CTL_PERIOD_DAYS + 1.0)
+_ATL_ALPHA = 2.0 / (_ATL_PERIOD_DAYS + 1.0)
+_BANISTER_TRIMP_K_MALE = 1.92
+_BANISTER_TRIMP_K_FEMALE = 1.67
+
+Sex = Literal["male", "female"]
 
 
 def _number(value: Any) -> float | None:
@@ -106,6 +115,27 @@ def _trimp_activity_inputs_ready(activity: dict[str, Any]) -> bool:
     )
 
 
+def _compute_trimp(
+    activity: dict[str, Any],
+    resting_hr: float,
+    user_max_hr: float,
+    sex: Sex,
+) -> float | None:
+    """Compute Banister TRIMP using the same v1 formula as ha-garmin Fitness."""
+    avg_hr = _number(activity.get("averageHR"))
+    duration_seconds = _number(activity.get("duration"))
+    if avg_hr is None or duration_seconds is None or duration_seconds <= 0:
+        return None
+    if user_max_hr <= resting_hr:
+        raise ValueError("max_hr must be greater than resting HR")
+
+    hr_ratio = (avg_hr - resting_hr) / (user_max_hr - resting_hr)
+    hr_ratio = max(0.0, min(1.0, hr_ratio))
+    k = _BANISTER_TRIMP_K_FEMALE if sex == "female" else _BANISTER_TRIMP_K_MALE
+    trimp = (duration_seconds / 60.0) * hr_ratio * math.exp(k * hr_ratio)
+    return round(trimp, 3)
+
+
 def _richness(activity: dict[str, Any]) -> int:
     """Score fields useful to Training calculations for duplicate selection."""
     fields = (
@@ -148,7 +178,11 @@ def _sort_key(activity: dict[str, Any]) -> tuple[date, datetime]:
 
 
 def _compact_activity(
-    activity: dict[str, Any], resting_hr: dict[date, float]
+    activity: dict[str, Any],
+    resting_hr: dict[date, float],
+    *,
+    user_max_hr: float | None,
+    sex: Sex | None,
 ) -> dict[str, Any]:
     """Return only Training-relevant fields; never include route/location data."""
     activity_date = _activity_date(activity)
@@ -159,6 +193,15 @@ def _compact_activity(
     max_hr = _number(activity.get("maxHR"))
     resting_hr_for_day = resting_hr.get(activity_date) if activity_date else None
     activity_inputs_ready = _trimp_activity_inputs_ready(activity)
+    trimp_context_ready = activity_inputs_ready and resting_hr_for_day is not None
+    trimp = None
+    if (
+        trimp_context_ready
+        and resting_hr_for_day is not None
+        and user_max_hr is not None
+        and sex is not None
+    ):
+        trimp = _compute_trimp(activity, resting_hr_for_day, user_max_hr, sex)
     return {
         "activity_id": _activity_id(activity),
         "name": activity.get("activityName"),
@@ -170,10 +213,11 @@ def _compact_activity(
         "max_hr": max_hr,
         "resting_hr": resting_hr_for_day,
         "garmin_training_load": training_load,
+        "trimp": trimp,
         "aerobic_training_effect": _number(activity.get("aerobicTrainingEffect")),
         "anaerobic_training_effect": _number(activity.get("anaerobicTrainingEffect")),
         "trimp_activity_inputs_ready": activity_inputs_ready,
-        "trimp_context_ready": activity_inputs_ready and resting_hr_for_day is not None,
+        "trimp_context_ready": trimp_context_ready,
     }
 
 
@@ -279,15 +323,178 @@ async def _fetch_resting_hr_window(
     return result
 
 
+def _build_daily_loads(
+    by_day: dict[date, list[dict[str, Any]]],
+    resting_hr: dict[date, float],
+    start_date: date,
+    end_date: date,
+    *,
+    user_max_hr: float | None,
+    sex: Sex | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Build strict continuous Garmin Load and TRIMP daily series."""
+    garmin_rows: list[dict[str, Any]] = []
+    trimp_rows: list[dict[str, Any]] = []
+    current = start_date
+    while current <= end_date:
+        items = by_day.get(current, [])
+        if not items:
+            garmin_rows.append({"date": current, "load": 0.0, "complete": True})
+            trimp_rows.append({"date": current, "load": 0.0, "complete": True})
+            current += timedelta(days=1)
+            continue
+
+        garmin_values = [
+            value
+            for item in items
+            if (value := _number(item.get("activityTrainingLoad"))) is not None
+        ]
+        garmin_complete = len(garmin_values) == len(items)
+        garmin_rows.append(
+            {
+                "date": current,
+                "load": round(sum(garmin_values), 3) if garmin_complete else None,
+                "known_load": round(sum(garmin_values), 3),
+                "complete": garmin_complete,
+            }
+        )
+
+        trimp_values: list[float] = []
+        rhr = resting_hr.get(current)
+        if rhr is not None and user_max_hr is not None and sex is not None:
+            for item in items:
+                value = _compute_trimp(item, rhr, user_max_hr, sex)
+                if value is not None:
+                    trimp_values.append(value)
+        trimp_complete = (
+            user_max_hr is not None
+            and sex is not None
+            and rhr is not None
+            and len(trimp_values) == len(items)
+        )
+        trimp_rows.append(
+            {
+                "date": current,
+                "load": round(sum(trimp_values), 3) if trimp_complete else None,
+                "known_load": round(sum(trimp_values), 3),
+                "complete": trimp_complete,
+            }
+        )
+        current += timedelta(days=1)
+    return garmin_rows, trimp_rows
+
+
+def _training_series(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Return CTL/ATL/TSB only when the whole daily series is complete."""
+    blockers = [row["date"] for row in rows if not row["complete"] or row["load"] is None]
+    if blockers:
+        return {
+            "ready": False,
+            "blocker_dates": [item.isoformat() for item in blockers[:10]],
+            "points": None,
+            "latest": None,
+        }
+    if not rows:
+        return {"ready": True, "blocker_dates": [], "points": [], "latest": None}
+
+    first_load = float(rows[0]["load"])
+    ctl = first_load
+    atl = first_load
+    points = [
+        {
+            "date": rows[0]["date"].isoformat(),
+            "daily_load": first_load,
+            "ctl": round(ctl, 3),
+            "atl": round(atl, 3),
+            "tsb": round(ctl - atl, 3),
+        }
+    ]
+    for row in rows[1:]:
+        load = float(row["load"])
+        ctl = (_CTL_ALPHA * load) + ((1.0 - _CTL_ALPHA) * ctl)
+        atl = (_ATL_ALPHA * load) + ((1.0 - _ATL_ALPHA) * atl)
+        points.append(
+            {
+                "date": row["date"].isoformat(),
+                "daily_load": load,
+                "ctl": round(ctl, 3),
+                "atl": round(atl, 3),
+                "tsb": round(ctl - atl, 3),
+            }
+        )
+    return {
+        "ready": True,
+        "blocker_dates": [],
+        "points": points,
+        "latest": points[-1],
+    }
+
+
+def _pearson(values_x: list[float], values_y: list[float]) -> float | None:
+    """Return Pearson correlation for paired values without scipy."""
+    if len(values_x) != len(values_y) or len(values_x) < 2:
+        return None
+    mean_x = sum(values_x) / len(values_x)
+    mean_y = sum(values_y) / len(values_y)
+    dx = [value - mean_x for value in values_x]
+    dy = [value - mean_y for value in values_y]
+    denominator = math.sqrt(sum(value * value for value in dx) * sum(value * value for value in dy))
+    if denominator == 0:
+        return None
+    return round(sum(x * y for x, y in zip(dx, dy, strict=True)) / denominator, 3)
+
+
+def _compare_daily_loads(
+    garmin_rows: list[dict[str, Any]],
+    trimp_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Compare complete activity-day loads where both source values exist."""
+    garmin_values: list[float] = []
+    trimp_values: list[float] = []
+    paired_dates: list[str] = []
+    for garmin_row, trimp_row in zip(garmin_rows, trimp_rows, strict=True):
+        # Rest days are zero in both series and would artificially inflate correlation.
+        if garmin_row["load"] == 0.0 and trimp_row["load"] == 0.0:
+            continue
+        if garmin_row["load"] is None or trimp_row["load"] is None:
+            continue
+        paired_dates.append(garmin_row["date"].isoformat())
+        garmin_values.append(float(garmin_row["load"]))
+        trimp_values.append(float(trimp_row["load"]))
+
+    garmin_total = round(sum(garmin_values), 3)
+    trimp_total = round(sum(trimp_values), 3)
+    return {
+        "paired_activity_days": len(paired_dates),
+        "first_paired_date": paired_dates[0] if paired_dates else None,
+        "last_paired_date": paired_dates[-1] if paired_dates else None,
+        "pearson_correlation": _pearson(garmin_values, trimp_values),
+        "garmin_load_total_on_paired_days": garmin_total,
+        "trimp_total_on_paired_days": trimp_total,
+        "trimp_to_garmin_total_ratio": (
+            round(trimp_total / garmin_total, 3) if garmin_total > 0 else None
+        ),
+        "note": "Load scales differ; correlation compares shape, not numerical equivalence.",
+    }
+
+
 async def build_fitness_probe(
     client: GarminClient,
     days: int = 90,
     *,
     end_date: date | None = None,
+    user_max_hr: float | None = None,
+    sex: Sex | None = None,
 ) -> dict[str, Any]:
-    """Return read-only Garmin Load/TRIMP-input diagnostics for a date window."""
+    """Return read-only Garmin Load/TRIMP diagnostics for a date window."""
     if days < 1 or days > 365:
         raise ValueError("days must be between 1 and 365")
+    if (user_max_hr is None) != (sex is None):
+        raise ValueError("max_hr and sex must be provided together")
+    if user_max_hr is not None and not 100 <= user_max_hr <= 250:
+        raise ValueError("max_hr must be between 100 and 250")
+    if sex not in (None, "male", "female"):
+        raise ValueError("sex must be male or female")
 
     end_date = end_date or date.today()
     start_date = end_date - timedelta(days=days - 1)
@@ -355,17 +562,40 @@ async def build_fitness_probe(
             }
         )
 
+    garmin_daily, trimp_daily = _build_daily_loads(
+        by_day,
+        resting_hr,
+        start_date,
+        end_date,
+        user_max_hr=user_max_hr,
+        sex=sex,
+    )
+    trimp_configured = user_max_hr is not None and sex is not None
+    comparison = (
+        _compare_daily_loads(garmin_daily, trimp_daily) if trimp_configured else None
+    )
     compact = [
-        _compact_activity(item, resting_hr)
+        _compact_activity(
+            item,
+            resting_hr,
+            user_max_hr=user_max_hr,
+            sex=sex,
+        )
         for item in activities[:_RECENT_ACTIVITY_LIMIT]
     ]
+    remaining_requirements = [] if trimp_configured else ["explicit max_hr", "sex"]
     return {
-        "probe_version": 2,
+        "probe_version": 3,
+        "algorithm_version": _ALGORITHM_VERSION,
         "read_only": True,
         "window": {
             "days": days,
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
+        },
+        "configuration": {
+            "max_hr": user_max_hr,
+            "sex": sex,
         },
         "api_requests": request_count,
         "activities": {
@@ -408,7 +638,12 @@ async def build_fitness_probe(
             "first_incomplete_dates": [
                 item.isoformat() for item in incomplete_trimp_days[:10]
             ],
-            "remaining_requirements": ["explicit max_hr", "sex"],
+            "remaining_requirements": remaining_requirements,
+        },
+        "comparison": comparison,
+        "training_series": {
+            "garmin": _training_series(garmin_daily),
+            "trimp": _training_series(trimp_daily) if trimp_configured else None,
         },
         "by_activity_type": by_type_rows,
         "latest_activity": compact[0] if compact else None,
