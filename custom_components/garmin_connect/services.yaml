@@ -371,6 +371,7 @@ add_gear_to_activity:
         entity:
           integration: garmin_connect
           domain: sensor
+
 add_nutrition_log:
   name: Add nutrition log
   description: >
@@ -430,3 +431,25 @@ add_nutrition_log:
       example: "2024-01-15T12:30:00"
       selector:
         text:
+
+fitness_probe:
+  name: Fitness probe
+  description: Run a read-only Garmin Fitness activity-load diagnostic using the existing Garmin Connect account.
+  fields:
+    entity_id:
+      name: Garmin Connect entity
+      description: Optional Garmin Connect sensor used to select the account when multiple accounts are configured.
+      selector:
+        entity:
+          integration: garmin_connect
+          domain: sensor
+    days:
+      name: History window
+      description: Number of calendar days to inspect.
+      default: 90
+      selector:
+        number:
+          min: 1
+          max: 365
+          step: 1
+          unit_of_measurement: days
