@@ -28,6 +28,11 @@ FITNESS_PROBE_SCHEMA = vol.Schema(
             vol.Coerce(int),
             vol.Range(min=1, max=365),
         ),
+        vol.Optional("max_hr"): vol.All(
+            vol.Coerce(float),
+            vol.Range(min=100, max=250),
+        ),
+        vol.Optional("sex"): vol.In(("male", "female")),
     }
 )
 
@@ -45,6 +50,8 @@ async def async_setup_fitness_probe_service(hass: HomeAssistant) -> None:
                 client,
                 days=call.data["days"],
                 end_date=dt_util.now().date(),
+                user_max_hr=call.data.get("max_hr"),
+                sex=call.data.get("sex"),
             )
         except (GarminConnectError, ClientError, RuntimeError, ValueError) as err:
             raise HomeAssistantError(f"Garmin Fitness probe failed: {err}") from err
