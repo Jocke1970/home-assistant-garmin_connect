@@ -1,6 +1,7 @@
 """Tests for the read-only Garmin Fitness activity probe."""
 
 from datetime import date
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -32,6 +33,20 @@ def _activity(
     return data
 
 
+def _configure_resting_hr(client: AsyncMock, values: dict[str, float]) -> None:
+    client.get_user_profile.return_value = SimpleNamespace(display_name="test/user")
+    client._request.return_value = {
+        "allMetrics": {
+            "metricsMap": {
+                "WELLNESS_RESTING_HEART_RATE": [
+                    {"calendarDate": day, "value": value}
+                    for day, value in values.items()
+                ]
+            }
+        }
+    }
+
+
 @pytest.mark.asyncio
 async def test_probe_reports_latest_rowing_and_coverage() -> None:
     client = AsyncMock()
@@ -50,6 +65,10 @@ async def test_probe_reports_latest_rowing_and_coverage() -> None:
             _activity(1, "2026-08-10", load=4.2, avg_hr=101),
         ]
     ]
+    _configure_resting_hr(
+        client,
+        {"2026-09-03": 56, "2026-08-20": 58, "2026-08-10": 57},
+    )
 
     result = await build_fitness_probe(
         client,
@@ -57,6 +76,7 @@ async def test_probe_reports_latest_rowing_and_coverage() -> None:
         end_date=date(2026, 9, 3),
     )
 
+    assert result["probe_version"] == 2
     assert result["activities"] == {
         "total": 3,
         "activity_days": 3,
@@ -65,20 +85,22 @@ async def test_probe_reports_latest_rowing_and_coverage() -> None:
     assert result["garmin_load"]["activities_with_load"] == 2
     assert result["garmin_load"]["coverage_percent"] == pytest.approx(66.7)
     assert result["trimp_activity_inputs"]["coverage_percent"] == 100.0
+    assert result["resting_hr"]["activity_day_coverage_percent"] == 100.0
+    assert result["trimp_context"]["coverage_percent"] == 100.0
     assert result["latest_activity"]["activity_type"] == "indoor_rowing"
     assert result["latest_activity"]["garmin_training_load"] == 18.4
     assert result["latest_activity"]["duration_minutes"] == 15.0
+    assert result["latest_activity"]["resting_hr"] == 56
+    assert result["latest_activity"]["trimp_context_ready"] is True
 
 
 @pytest.mark.asyncio
 async def test_probe_stops_after_page_reaches_before_window() -> None:
     client = AsyncMock()
-    page = [
-        _activity(index + 1, "2026-09-03", load=1.0)
-        for index in range(99)
-    ]
+    page = [_activity(index + 1, "2026-09-03", load=1.0) for index in range(99)]
     page.append(_activity(100, "2026-01-01", load=1.0))
     client.get_activities.return_value = page
+    _configure_resting_hr(client, {"2026-09-03": 55})
 
     result = await build_fitness_probe(
         client,
@@ -102,6 +124,7 @@ async def test_probe_prefers_richer_duplicate_activity() -> None:
             "anaerobicTrainingEffect": 0.2,
         },
     ]
+    _configure_resting_hr(client, {"2026-09-03": 54})
 
     result = await build_fitness_probe(
         client,
@@ -113,6 +136,30 @@ async def test_probe_prefers_richer_duplicate_activity() -> None:
     assert result["garmin_load"]["coverage_percent"] == 100.0
     assert result["latest_activity"]["garmin_training_load"] == 12.5
     assert result["latest_activity"]["aerobic_training_effect"] == 2.1
+
+
+@pytest.mark.asyncio
+async def test_probe_marks_missing_resting_hr_as_incomplete_trimp_context() -> None:
+    client = AsyncMock()
+    client.get_activities.return_value = [
+        _activity(2, "2026-09-03", avg_hr=120),
+        _activity(1, "2026-09-02", avg_hr=110),
+    ]
+    _configure_resting_hr(client, {"2026-09-02": 57})
+
+    result = await build_fitness_probe(
+        client,
+        days=2,
+        end_date=date(2026, 9, 3),
+    )
+
+    assert result["resting_hr"]["measurement_days"] == 1
+    assert result["resting_hr"]["activity_day_coverage_percent"] == 50.0
+    assert result["trimp_context"]["complete_activity_days"] == 1
+    assert result["trimp_context"]["incomplete_activity_days"] == 1
+    assert result["trimp_context"]["first_incomplete_dates"] == ["2026-09-03"]
+    assert result["latest_activity"]["resting_hr"] is None
+    assert result["latest_activity"]["trimp_context_ready"] is False
 
 
 @pytest.mark.asyncio
