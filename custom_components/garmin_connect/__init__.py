@@ -191,8 +191,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: GarminConnectConfigEntry
     except asyncio.CancelledError as err:
         raise ConfigEntryNotReady("Garmin API timed out during setup; will retry") from err
 
+    # Activity owns the event that teaches the shared client which gear was used
+    # most recently. Prime it before Gear so last_activity is available on the
+    # very first Gear refresh after Home Assistant starts. Keep it best-effort,
+    # matching the previous parallel-refresh behaviour.
     await asyncio.gather(
         coordinators.activity.async_refresh(),
+        return_exceptions=True,
+    )
+
+    await asyncio.gather(
         coordinators.training.async_refresh(),
         coordinators.body.async_refresh(),
         coordinators.goals.async_refresh(),
