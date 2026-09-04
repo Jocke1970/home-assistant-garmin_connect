@@ -1955,6 +1955,10 @@ class GarminConnectGearSensor(CoordinatorEntity[GearCoordinator], SensorEntity):
                     "custom_make_model": gear_stat.get("customMakeModel"),
                     "maximum_meters": gear_stat.get("maximumMeters"),
                     "default_for_activity": gear_stat.get("defaultForActivity", []),
+                    "default_for_activity_details": gear_stat.get(
+                        "defaultForActivityDetails", []
+                    ),
+                    "last_activity": gear_stat.get("lastActivity"),
                 }
         return {}
 

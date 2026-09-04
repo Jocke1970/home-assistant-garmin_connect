@@ -17,7 +17,7 @@
   ],
   "quality_scale": "gold",
   "requirements": [
-    "ha-garmin==0.1.37"
+    "ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@997fa7f600652bbc0c452b421eaffb5f4ba54203"
   ],
-  "version": "3.0.16-fitness-probe.6"
+  "version": "3.0.17-fitness-probe.7"
 }
