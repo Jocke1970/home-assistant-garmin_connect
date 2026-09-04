@@ -25,7 +25,7 @@ You need a Garmin Connect account with at least one Garmin device that syncs dat
 
 ## Sensors
 
-This integration provides **110+ sensors** covering various health and fitness metrics. Sensors are grouped into the following categories:
+This integration provides **130+ sensors** covering various health and fitness metrics. Sensors are grouped into the following categories:
 
 ### Activity & Steps
 
@@ -121,7 +121,24 @@ This integration provides **110+ sensors** covering various health and fitness m
 
 ### Gear Tracking
 
-Gear sensors are dynamically created for each piece of equipment registered in Garmin Connect (shoes, bikes, etc.). They track total distance and usage statistics.
+Gear sensors are dynamically created for each piece of equipment registered in Garmin Connect (shoes, bikes, trainers, rowing machines, etc.). They track total distance and usage statistics and expose Garmin metadata as sensor attributes.
+
+Important Gear attributes include:
+
+- `gear_uuid` - Garmin's stable Gear identifier
+- `total_activities` - Number of Garmin activities associated with the item
+- `gear_make_name`, `gear_model_name`, `custom_make_model` - Model metadata when available
+- `gear_status_name` - Garmin Gear status
+- `maximum_meters` - Configured lifetime/distance limit when available
+- `default_for_activity` - Human-readable Garmin `typeKey` values such as `indoor_cycling` or `indoor_rowing`
+- `default_for_activity_details` - Dynamic activity type metadata containing `typeId`, `typeKey` and `parentTypeId`
+- `last_activity` - Latest Gear-associated activity found in the current recent-activity window, including activity ID, name, type, start time, distance and duration when available
+
+Activity type IDs are resolved dynamically from Garmin instead of relying on a static numeric-ID table. The latest Gear activity is derived from the Activity coordinator and cached by activity ID, avoiding a separate historical poll for every Gear item.
+
+The current bootstrap scans the recent Activity window (10 activities). Gear whose latest use is older than that window can therefore have usage totals but no `last_activity` until it is used again or a future controlled historical backfill is added.
+
+See [`GARMIN_GEAR.md`](GARMIN_GEAR.md) for the complete data flow, cache/retry behaviour and frontend contract.
 
 ## Actions
 
@@ -197,3 +214,4 @@ If your Garmin account has Multi-Factor Authentication (MFA) enabled, you will b
 
 - Not all sensors will have data depending on your Garmin devices and connected apps.
 - API rate limits may cause temporary unavailability during high-traffic periods.
+- `last_activity` for Gear is a bounded recent-window cache, not an exhaustive historical lookup. Missing `last_activity` does not necessarily mean the Gear item has never been used.
