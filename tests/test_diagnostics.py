@@ -123,6 +123,8 @@ def test_to_redact_contains_expected_keys() -> None:
         "fullName",
         "userName",
         "email",
+        "profileId",
+        "userProfilePk",
         "profileImageUrlMedium",
         "profileImageUrlSmall",
         "profileImageUrlLarge",
