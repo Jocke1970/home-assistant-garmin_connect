@@ -159,5 +159,10 @@ class GarminFitnessSensor(CoordinatorEntity[FitnessCoordinator], SensorEntity):
             "calculation_start": data.get("calculation_start"),
             "calculation_end": data.get("calculation_end"),
             "warmup_days": data.get("warmup_days"),
+            "effective_calculation_days": data.get("effective_calculation_days"),
+            "effective_calculation_start": data.get("effective_calculation_start"),
+            "effective_warmup_days": data.get("effective_warmup_days"),
+            "warmup_recovered": data.get("warmup_recovered", False),
+            "warmup_blocker_dates": data.get("warmup_blocker_dates") or [],
             "blocker_dates": data.get("blocker_dates") or [],
         }
