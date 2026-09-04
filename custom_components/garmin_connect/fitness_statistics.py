@@ -19,7 +19,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
-from .fitness_sensor import FITNESS_SENSOR_DESCRIPTIONS, FITNESS_UNIT
+from .fitness_sensor import FITNESS_SENSOR_DESCRIPTIONS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ def async_backfill_fitness_statistics(
             source=RECORDER_DOMAIN,
             statistic_id=entity_id,
             name=None,
-            unit_of_measurement=FITNESS_UNIT,
+            unit_of_measurement=description.native_unit_of_measurement,
             unit_class=None,
             mean_type=StatisticMeanType.ARITHMETIC,
             has_sum=False,
