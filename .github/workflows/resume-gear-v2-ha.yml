@@ -1,0 +1,58 @@
+name: Resume HA Gear v2 patch
+
+on:
+  push:
+    branches: [feature/garmin-fitness]
+    paths:
+      - .github/workflows/resume-gear-v2-ha.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Apply corrected Gear v2 patch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          workflow = Path(".github/workflows/patch-gear-v2-ha.yml").read_text()
+          start = workflow.index("          python - <<'PY'\n") + len("          python - <<'PY'\n")
+          end = workflow.index("\n          PY\n", start)
+          script = workflow[start:end]
+          script = "\n".join(
+              line[10:] if line.startswith("          ") else line
+              for line in script.splitlines()
+          )
+          old = "                return gear_stat"
+          new = "                return cast(dict[str, Any], gear_stat)"
+          if script.count(old) != 1:
+              raise SystemExit(f"Expected one Gear return to fix, found {script.count(old)}")
+          script = script.replace(old, new, 1)
+          exec(compile(script, "<gear-v2-patch>", "exec"), {"__name__": "__main__"})
+          PY
+
+      - name: Install test dependencies
+        run: |
+          pip install -r requirements.txt -r requirements_lint.txt
+
+      - name: Run focused checks
+        run: |
+          pre-commit run --all-files --hook-stage manual --config .github/pre-commit-config.yaml
+          pytest tests/test_sensor.py -q
+
+      - name: Commit feature and clean temporary workflows
+        run: |
+          rm .github/workflows/patch-gear-v2-ha.yml .github/workflows/resume-gear-v2-ha.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add custom_components/garmin_connect/sensor.py custom_components/garmin_connect/manifest.json tests/test_sensor.py .github/workflows/patch-gear-v2-ha.yml .github/workflows/resume-gear-v2-ha.yml
+          git commit -m "feat: expose Garmin Gear v2 usage in HA"
+          git push
