@@ -1,0 +1,23 @@
+name: One-shot Fitness Gear Probe 8 Release
+
+on:
+  push:
+    paths:
+      - ".github/workflows/release-fitness-gear-probe-8.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create release from verified Fitness branch commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "3.0.18-fitness-probe.8" \
+            --repo "${{ github.repository }}" \
+            --target "538455ad1b4a54f5fbac5bfc4a40acfb218defe0" \
+            --title "Garmin Fitness + Gear probe 8" \
+            --notes "Fixes latest Gear activity backfill by scanning the recent Garmin activity window newest-to-oldest and caching gear associations per activity. Historical no-gear results are cached after one lookup; only the newest activity gets bounded propagation retries. Preserves the existing Garmin Fitness probe."
