@@ -122,7 +122,6 @@ class GarminFitnessSensor(CoordinatorEntity[FitnessCoordinator], SensorEntity):
             manufacturer="Garmin",
             model="Fitness analytics",
             entry_type=DeviceEntryType.SERVICE,
-            via_device=(DOMAIN, entry_id),
         )
 
     @property
