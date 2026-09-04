@@ -1,0 +1,23 @@
+name: One-shot Fitness Gear Probe Release
+
+on:
+  push:
+    paths:
+      - ".github/workflows/release-fitness-gear-probe.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create release from verified Fitness branch commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "3.0.17-fitness-probe.7" \
+            --repo "${{ github.repository }}" \
+            --target "7b427e52ba65e3277d3fc1aa47b18b03bc635567" \
+            --title "Garmin Fitness + Gear probe 7" \
+            --notes "Adds activity-aware Garmin Gear metadata while preserving the existing Garmin Fitness probe. Gear defaults now resolve through a dynamic Activity Type Registry (typeId/typeKey/parentTypeId), Gear sensors expose default_for_activity_details and last_activity, and Activity is primed before Gear at startup so the latest gear association is available immediately. Latest-activity Gear lookup is cached per activity with bounded retries, avoiding per-gear polling."
