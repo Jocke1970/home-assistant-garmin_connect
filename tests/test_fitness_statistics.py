@@ -23,6 +23,7 @@ def _history_data(*, complete: bool = True) -> dict:
                 "tsb": -10.0,
                 "acwr": 0.9,
                 "ramp_rate": 1.5,
+                "strain": 2.1,
             },
             {
                 "date": "2026-09-03",
@@ -32,6 +33,7 @@ def _history_data(*, complete: bool = True) -> dict:
                 "tsb": -10.0,
                 "acwr": 1.1,
                 "ramp_rate": 1.0,
+                "strain": 2.5,
             },
             {
                 "date": "2026-09-04",
@@ -41,6 +43,7 @@ def _history_data(*, complete: bool = True) -> dict:
                 "tsb": -6.0,
                 "acwr": 0.8,
                 "ramp_rate": -0.5,
+                "strain": 1.0,
             },
         ],
     }
@@ -77,8 +80,8 @@ def test_backfill_imports_completed_days_for_all_fitness_sensors() -> None:
             _history_data(),
         )
 
-    assert imported == 12
-    assert import_statistics.call_count == 6
+    assert imported == 14
+    assert import_statistics.call_count == 7
 
     by_statistic_id = {
         call.args[1]["statistic_id"]: (call.args[1], call.args[2])
@@ -91,6 +94,7 @@ def test_backfill_imports_completed_days_for_all_fitness_sensors() -> None:
         "sensor.garmin_fitness_tsb",
         "sensor.garmin_fitness_acwr",
         "sensor.garmin_fitness_ramp_rate",
+        "sensor.garmin_fitness_strain",
     }
 
     metadata, statistics = by_statistic_id["sensor.garmin_fitness_ctl"]
@@ -112,6 +116,12 @@ def test_backfill_imports_completed_days_for_all_fitness_sensors() -> None:
     ]
     assert ramp_metadata["unit_of_measurement"] == "TRIMP"
     assert [row["mean"] for row in ramp_statistics] == [1.5, 1.0]
+
+    strain_metadata, strain_statistics = by_statistic_id[
+        "sensor.garmin_fitness_strain"
+    ]
+    assert strain_metadata["unit_of_measurement"] is None
+    assert [row["mean"] for row in strain_statistics] == [2.1, 2.5]
 
 
 def test_backfill_skips_missing_rolling_metric_values() -> None:
@@ -144,8 +154,8 @@ def test_backfill_skips_missing_rolling_metric_values() -> None:
     ):
         imported = async_backfill_fitness_statistics(hass, "entry_1", data)
 
-    # Four base metrics contribute two rows each; ACWR and ramp contribute one each.
-    assert imported == 10
+    # Five always-defined metrics contribute two rows each; ACWR and ramp one each.
+    assert imported == 12
     by_statistic_id = {
         call.args[1]["statistic_id"]: call.args[2]
         for call in import_statistics.call_args_list
@@ -157,6 +167,9 @@ def test_backfill_skips_missing_rolling_metric_values() -> None:
         row["mean"]
         for row in by_statistic_id["sensor.garmin_fitness_ramp_rate"]
     ] == [1.0]
+    assert [
+        row["mean"] for row in by_statistic_id["sensor.garmin_fitness_strain"]
+    ] == [2.1, 2.5]
 
 
 def test_backfill_refuses_incomplete_training_history() -> None:
