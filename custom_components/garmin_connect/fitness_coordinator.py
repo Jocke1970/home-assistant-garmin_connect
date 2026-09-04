@@ -64,6 +64,7 @@ def _augment_training_metrics(points: list[Any]) -> list[dict[str, Any]]:
     left-edge initialization problem for rolling metrics.
     """
     normalized: list[dict[str, Any]] = []
+    dates: list[date] = []
     loads: list[float] = []
     ctls: list[float] = []
 
@@ -71,8 +72,11 @@ def _augment_training_metrics(points: list[Any]) -> list[dict[str, Any]]:
         if not isinstance(raw_point, dict):
             raise ValueError("Fitness training point must be a mapping")
 
+        point_date = _parse_date(raw_point.get("date"))
         raw_load = raw_point.get("daily_load")
         raw_ctl = raw_point.get("ctl")
+        if point_date is None:
+            raise ValueError("Fitness training point is missing a valid date")
         if (
             isinstance(raw_load, bool)
             or not isinstance(raw_load, int | float)
@@ -80,8 +84,11 @@ def _augment_training_metrics(points: list[Any]) -> list[dict[str, Any]]:
             or not isinstance(raw_ctl, int | float)
         ):
             raise ValueError("Fitness training point is missing daily_load or ctl")
+        if dates and point_date != dates[-1] + timedelta(days=1):
+            raise ValueError("Fitness training series must contain consecutive dates")
 
         normalized.append(dict(raw_point))
+        dates.append(point_date)
         loads.append(float(raw_load))
         ctls.append(float(raw_ctl))
 
