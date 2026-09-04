@@ -59,6 +59,19 @@ FITNESS_SENSOR_DESCRIPTIONS: tuple[GarminFitnessSensorEntityDescription, ...] = 
         native_unit_of_measurement=FITNESS_UNIT,
         suggested_display_precision=1,
     ),
+    GarminFitnessSensorEntityDescription(
+        key="acwr",
+        name="ACWR",
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=2,
+    ),
+    GarminFitnessSensorEntityDescription(
+        key="ramp_rate",
+        name="Ramp rate",
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=FITNESS_UNIT,
+        suggested_display_precision=1,
+    ),
 )
 
 
@@ -165,4 +178,7 @@ class GarminFitnessSensor(CoordinatorEntity[FitnessCoordinator], SensorEntity):
             "warmup_recovered": data.get("warmup_recovered", False),
             "warmup_blocker_dates": data.get("warmup_blocker_dates") or [],
             "blocker_dates": data.get("blocker_dates") or [],
+            "acwr_acute_days": data.get("acwr_acute_days"),
+            "acwr_chronic_days": data.get("acwr_chronic_days"),
+            "ramp_period_days": data.get("ramp_period_days"),
         }
