@@ -1,0 +1,39 @@
+name: One-shot release fitness probe 13
+
+on:
+  push:
+    branches: [feature/garmin-fitness]
+    paths:
+      - .github/workflows/release-fitness-probe-13.yml
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: feature/garmin-fitness
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: 3.0.21-fitness-probe.13
+          TARGET: 4c3abda866b90faaeb6c7a96f311a4c10b862735
+        run: |
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$TARGET" \
+            --title "Garmin Fitness + Gear probe 13 – Gear v2 usage" \
+            --notes "Adds Garmin Gear v2 usage data end-to-end while preserving existing HA Gear entity identity.\n\nGear sensors now follow Garmin's selected usage metric: distance-based Gear remains a distance sensor, while duration-based Gear is exposed in hours with duration semantics.\n\nAdds richer Gear attributes including gear type, brand/model, usage type, distance used, duration used, days used and associated activity types. Garmin Gear v2 is primary with legacy Gear stats as fallback, and canonical v2 UUIDs are kept separate so existing compact Gear UUID unique IDs remain stable.\n\nPreserves the existing Garmin Fitness probe, Strain, ACWR, Ramp, CTL/ATL/TSB and recent Gear activity support."
+
+      - name: Remove temporary workflow
+        run: |
+          rm .github/workflows/release-fitness-probe-13.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/release-fitness-probe-13.yml
+          git commit -m "chore: remove probe 13 release workflow"
+          git push origin HEAD:feature/garmin-fitness
