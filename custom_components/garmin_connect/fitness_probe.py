@@ -15,6 +15,7 @@ from urllib.parse import quote
 
 from ha_garmin import GarminClient
 from ha_garmin.const import GARMIN_CONNECT_API
+from ha_garmin.exceptions import GarminAuthError, GarminConnectError
 
 _PAGE_SIZE = 100
 _MAX_PAGES = 50
@@ -29,6 +30,14 @@ _CTL_ALPHA = 2.0 / (_CTL_PERIOD_DAYS + 1.0)
 _ATL_ALPHA = 2.0 / (_ATL_PERIOD_DAYS + 1.0)
 _BANISTER_TRIMP_K_MALE = 1.92
 _BANISTER_TRIMP_K_FEMALE = 1.67
+_ACTIVITY_ENRICHMENT_KEYS = (
+    "averageHR",
+    "maxHR",
+    "duration",
+    "activityTrainingLoad",
+    "aerobicTrainingEffect",
+    "anaerobicTrainingEffect",
+)
 
 Sex = Literal["male", "female"]
 
@@ -266,6 +275,55 @@ async def _fetch_activity_window(
     return deduplicated, requests
 
 
+async def _enrich_incomplete_activity_inputs(
+    client: GarminClient,
+    activities: list[dict[str, Any]],
+) -> tuple[int, int]:
+    """Fill missing TRIMP inputs from Garmin's single-activity summary endpoint.
+
+    The paginated activity list occasionally omits fields that are present in
+    the single-activity summary. Only incomplete activities are queried, and
+    existing list values are never overwritten.
+    """
+    requests = 0
+    repaired = 0
+
+    for activity in activities:
+        if _trimp_activity_inputs_ready(activity):
+            continue
+
+        activity_id = _activity_id(activity)
+        if activity_id is None:
+            continue
+
+        try:
+            summary = await client.get_activity(activity_id)
+        except GarminAuthError:
+            raise
+        except GarminConnectError:
+            continue
+
+        requests += 1
+        if not isinstance(summary, dict):
+            continue
+
+        source: dict[str, Any] = {}
+        summary_dto = summary.get("summaryDTO")
+        if isinstance(summary_dto, dict):
+            source.update(summary_dto)
+        source.update(summary)
+
+        was_ready = _trimp_activity_inputs_ready(activity)
+        for key in _ACTIVITY_ENRICHMENT_KEYS:
+            if activity.get(key) is None and source.get(key) is not None:
+                activity[key] = source[key]
+
+        if not was_ready and _trimp_activity_inputs_ready(activity):
+            repaired += 1
+
+    return requests, repaired
+
+
 async def _fetch_resting_hr_window(
     client: GarminClient,
     start_date: date,
@@ -499,6 +557,10 @@ async def build_fitness_probe(
     end_date = end_date or date.today()
     start_date = end_date - timedelta(days=days - 1)
     activities, request_count = await _fetch_activity_window(client, start_date, end_date)
+    detail_requests, repaired_activities = await _enrich_incomplete_activity_inputs(
+        client,
+        activities,
+    )
     resting_hr = await _fetch_resting_hr_window(client, start_date, end_date)
 
     total = len(activities)
@@ -583,9 +645,20 @@ async def build_fitness_probe(
         )
         for item in activities[:_RECENT_ACTIVITY_LIMIT]
     ]
+    blocker_activities = [
+        _compact_activity(
+            item,
+            resting_hr,
+            user_max_hr=user_max_hr,
+            sex=sex,
+        )
+        for day in incomplete_trimp_days
+        for item in by_day.get(day, [])
+        if day not in resting_hr or not _trimp_activity_inputs_ready(item)
+    ][:_RECENT_ACTIVITY_LIMIT]
     remaining_requirements = [] if trimp_configured else ["explicit max_hr", "sex"]
     return {
-        "probe_version": 3,
+        "probe_version": 4,
         "algorithm_version": _ALGORITHM_VERSION,
         "read_only": True,
         "window": {
@@ -598,6 +671,8 @@ async def build_fitness_probe(
             "sex": sex,
         },
         "api_requests": request_count,
+        "activity_detail_requests": detail_requests,
+        "activities_repaired_from_detail": repaired_activities,
         "activities": {
             "total": total,
             "activity_days": activity_days,
@@ -638,6 +713,7 @@ async def build_fitness_probe(
             "first_incomplete_dates": [
                 item.isoformat() for item in incomplete_trimp_days[:10]
             ],
+            "blocker_activities": blocker_activities,
             "remaining_requirements": remaining_requirements,
         },
         "comparison": comparison,
