@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
-from typing import Any
+from typing import Any, Literal, cast
 
 from aiohttp import ClientError
 from ha_garmin import GarminClient
@@ -34,6 +34,7 @@ _LOGGER = logging.getLogger(__name__)
 
 FITNESS_UPDATE_INTERVAL = timedelta(hours=1)
 FITNESS_LOAD_SOURCE = "trimp"
+FitnessSex = Literal["male", "female"]
 
 
 class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -59,7 +60,9 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.user_max_hr: float | None = (
             float(raw_max_hr) if raw_max_hr is not None else None
         )
-        self.sex: str | None = str(raw_sex) if raw_sex is not None else None
+        self.sex: FitnessSex | None = (
+            cast(FitnessSex, raw_sex) if raw_sex in ("male", "female") else None
+        )
 
     @property
     def configured(self) -> bool:
