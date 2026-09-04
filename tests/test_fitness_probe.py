@@ -78,9 +78,11 @@ async def test_probe_reports_trimp_comparison_and_series_readiness() -> None:
         sex="male",
     )
 
-    assert result["probe_version"] == 3
+    assert result["probe_version"] == 4
     assert result["algorithm_version"] == 1
     assert result["configuration"] == {"max_hr": 175, "sex": "male"}
+    assert result["activity_detail_requests"] == 0
+    assert result["activities_repaired_from_detail"] == 0
     assert result["activities"] == {
         "total": 3,
         "activity_days": 3,
@@ -91,6 +93,7 @@ async def test_probe_reports_trimp_comparison_and_series_readiness() -> None:
     assert result["trimp_activity_inputs"]["coverage_percent"] == 100.0
     assert result["resting_hr"]["activity_day_coverage_percent"] == 100.0
     assert result["trimp_context"]["coverage_percent"] == 100.0
+    assert result["trimp_context"]["blocker_activities"] == []
     assert result["trimp_context"]["remaining_requirements"] == []
     assert result["latest_activity"]["activity_type"] == "indoor_rowing"
     assert result["latest_activity"]["garmin_training_load"] == 18.4
@@ -103,6 +106,70 @@ async def test_probe_reports_trimp_comparison_and_series_readiness() -> None:
     assert result["training_series"]["garmin"]["blocker_dates"] == ["2026-08-20"]
     assert result["training_series"]["trimp"]["ready"] is True
     assert len(result["training_series"]["trimp"]["points"]) == 30
+
+
+@pytest.mark.asyncio
+async def test_probe_repairs_missing_hr_from_single_activity_summary() -> None:
+    """A sparse list row is enriched from Garmin before becoming a blocker."""
+    client = AsyncMock()
+    client.get_activities.return_value = [
+        _activity(7, "2026-09-03", avg_hr=None, duration=1200),
+    ]
+    client.get_activity.return_value = {
+        "summaryDTO": {
+            "averageHR": 123,
+            "duration": 1200,
+            "maxHR": 141,
+        }
+    }
+    _configure_resting_hr(client, {"2026-09-03": 55})
+
+    result = await build_fitness_probe(
+        client,
+        days=1,
+        end_date=date(2026, 9, 3),
+        user_max_hr=175,
+        sex="male",
+    )
+
+    client.get_activity.assert_awaited_once_with(7)
+    assert result["activity_detail_requests"] == 1
+    assert result["activities_repaired_from_detail"] == 1
+    assert result["trimp_activity_inputs"]["coverage_percent"] == 100.0
+    assert result["trimp_context"]["incomplete_activity_days"] == 0
+    assert result["trimp_context"]["blocker_activities"] == []
+    assert result["latest_activity"]["average_hr"] == 123.0
+    assert result["latest_activity"]["max_hr"] == 141.0
+    assert result["training_series"]["trimp"]["ready"] is True
+
+
+@pytest.mark.asyncio
+async def test_probe_reports_unresolved_blocker_activity() -> None:
+    """If Garmin detail is also sparse, keep the day incomplete and expose why."""
+    client = AsyncMock()
+    client.get_activities.return_value = [
+        _activity(8, "2026-09-03", avg_hr=None, duration=900),
+    ]
+    client.get_activity.return_value = {"summaryDTO": {"duration": 900}}
+    _configure_resting_hr(client, {"2026-09-03": 55})
+
+    result = await build_fitness_probe(
+        client,
+        days=1,
+        end_date=date(2026, 9, 3),
+        user_max_hr=175,
+        sex="male",
+    )
+
+    assert result["activities_repaired_from_detail"] == 0
+    assert result["trimp_context"]["incomplete_activity_days"] == 1
+    assert result["trimp_context"]["first_incomplete_dates"] == ["2026-09-03"]
+    blocker = result["trimp_context"]["blocker_activities"][0]
+    assert blocker["activity_id"] == 8
+    assert blocker["average_hr"] is None
+    assert blocker["duration_minutes"] == 15.0
+    assert blocker["trimp_activity_inputs_ready"] is False
+    assert result["training_series"]["trimp"]["ready"] is False
 
 
 @pytest.mark.asyncio
