@@ -72,6 +72,12 @@ FITNESS_SENSOR_DESCRIPTIONS: tuple[GarminFitnessSensorEntityDescription, ...] = 
         native_unit_of_measurement=FITNESS_UNIT,
         suggested_display_precision=1,
     ),
+    GarminFitnessSensorEntityDescription(
+        key="strain",
+        name="Strain",
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+    ),
 )
 
 
@@ -181,4 +187,18 @@ class GarminFitnessSensor(CoordinatorEntity[FitnessCoordinator], SensorEntity):
             "acwr_acute_days": data.get("acwr_acute_days"),
             "acwr_chronic_days": data.get("acwr_chronic_days"),
             "ramp_period_days": data.get("ramp_period_days"),
+            "strain_scale_max": data.get("strain_scale_max"),
+            "hard_day_threshold": data.get("hard_day_threshold"),
+            "personal_trimp_max": data.get("personal_trimp_max"),
+            "personal_trimp_max_source": data.get("personal_trimp_max_source"),
+            "strain_calibration_sessions": data.get("strain_calibration_sessions"),
+            "strain_calibration_min_sessions": data.get(
+                "strain_calibration_min_sessions"
+            ),
+            "strain_calibration_multiplier": data.get(
+                "strain_calibration_multiplier"
+            ),
+            "strain_calibration_complete": data.get(
+                "strain_calibration_complete", False
+            ),
         }
