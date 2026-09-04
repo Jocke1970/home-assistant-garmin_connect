@@ -25,6 +25,9 @@ FITNESS_CALCULATION_DAYS: Final = FITNESS_HISTORY_DAYS + FITNESS_WARMUP_DAYS
 # at least this many complete days remain before the visible 90-day window. With
 # the v1 42-day CTL EMA this leaves roughly 2% seed influence at the boundary.
 FITNESS_RECOVERY_MIN_WARMUP_DAYS: Final = 80
+FITNESS_ACWR_ACUTE_DAYS: Final = 7
+FITNESS_ACWR_CHRONIC_DAYS: Final = 28
+FITNESS_RAMP_PERIOD_DAYS: Final = 7
 FITNESS_MAX_HR_MIN: Final = 100
 FITNESS_MAX_HR_MAX: Final = 250
 FITNESS_SEX_OPTIONS: Final = ("male", "female")
