@@ -26,8 +26,11 @@ from .const import (
     CONF_FITNESS_MAX_HR,
     CONF_FITNESS_SEX,
     DOMAIN,
+    FITNESS_ACWR_ACUTE_DAYS,
+    FITNESS_ACWR_CHRONIC_DAYS,
     FITNESS_CALCULATION_DAYS,
     FITNESS_HISTORY_DAYS,
+    FITNESS_RAMP_PERIOD_DAYS,
     FITNESS_RECOVERY_MIN_WARMUP_DAYS,
     FITNESS_WARMUP_DAYS,
 )
@@ -50,6 +53,67 @@ def _parse_date(value: Any) -> date | None:
         return date.fromisoformat(value[:10])
     except ValueError:
         return None
+
+
+def _augment_training_metrics(points: list[Any]) -> list[dict[str, Any]]:
+    """Add ACWR and seven-day CTL ramp to a complete training series.
+
+    This mirrors ``ha_garmin.fitness.metrics`` at the temporary Home Assistant
+    adapter boundary. The calculations run on the entire effective warm-up
+    series before the visible 90-day slice is selected, preventing a second
+    left-edge initialization problem for rolling metrics.
+    """
+    normalized: list[dict[str, Any]] = []
+    loads: list[float] = []
+    ctls: list[float] = []
+
+    for raw_point in points:
+        if not isinstance(raw_point, dict):
+            raise ValueError("Fitness training point must be a mapping")
+
+        raw_load = raw_point.get("daily_load")
+        raw_ctl = raw_point.get("ctl")
+        if (
+            isinstance(raw_load, bool)
+            or not isinstance(raw_load, int | float)
+            or isinstance(raw_ctl, bool)
+            or not isinstance(raw_ctl, int | float)
+        ):
+            raise ValueError("Fitness training point is missing daily_load or ctl")
+
+        normalized.append(dict(raw_point))
+        loads.append(float(raw_load))
+        ctls.append(float(raw_ctl))
+
+    for index, point in enumerate(normalized):
+        if index >= FITNESS_ACWR_CHRONIC_DAYS - 1:
+            acute_window = loads[index - FITNESS_ACWR_ACUTE_DAYS + 1 : index + 1]
+            chronic_window = loads[
+                index - FITNESS_ACWR_CHRONIC_DAYS + 1 : index + 1
+            ]
+            acute_average = sum(acute_window) / FITNESS_ACWR_ACUTE_DAYS
+            chronic_average = sum(chronic_window) / FITNESS_ACWR_CHRONIC_DAYS
+            point["acute_average"] = round(acute_average, 3)
+            point["chronic_average"] = round(chronic_average, 3)
+            point["acwr"] = (
+                round(acute_average / chronic_average, 3)
+                if chronic_average > 0
+                else None
+            )
+        else:
+            point["acute_average"] = None
+            point["chronic_average"] = None
+            point["acwr"] = None
+
+        if index >= FITNESS_RAMP_PERIOD_DAYS:
+            point["ramp_rate"] = round(
+                ctls[index] - ctls[index - FITNESS_RAMP_PERIOD_DAYS],
+                3,
+            )
+        else:
+            point["ramp_rate"] = None
+
+    return normalized
 
 
 class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -193,7 +257,12 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not isinstance(all_points, list):
             all_points = []
 
-        visible_points = all_points[-FITNESS_HISTORY_DAYS:]
+        try:
+            enriched_points = _augment_training_metrics(all_points) if all_points else []
+        except ValueError as err:
+            raise UpdateFailed(f"Error calculating Garmin Fitness metrics: {err}") from err
+
+        visible_points = enriched_points[-FITNESS_HISTORY_DAYS:]
         visible_history_complete = len(visible_points) == FITNESS_HISTORY_DAYS
         latest = visible_points[-1] if visible_points else {}
         ready = (
@@ -221,6 +290,8 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "ctl": latest.get("ctl") if ready else None,
             "atl": latest.get("atl") if ready else None,
             "tsb": latest.get("tsb") if ready else None,
+            "acwr": latest.get("acwr") if ready else None,
+            "ramp_rate": latest.get("ramp_rate") if ready else None,
             "history": visible_points if ready else [],
             "history_days": FITNESS_HISTORY_DAYS,
             "history_start": history_start if ready else None,
@@ -238,6 +309,9 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "warmup_recovered": warmup_recovered,
             "warmup_blocker_dates": warmup_blocker_dates,
             "blocker_dates": remaining_blockers,
+            "acwr_acute_days": FITNESS_ACWR_ACUTE_DAYS,
+            "acwr_chronic_days": FITNESS_ACWR_CHRONIC_DAYS,
+            "ramp_period_days": FITNESS_RAMP_PERIOD_DAYS,
             "load_source": FITNESS_LOAD_SOURCE,
             "algorithm_version": probe.get("algorithm_version"),
             "max_hr": user_max_hr,
@@ -253,6 +327,8 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "ctl": None,
             "atl": None,
             "tsb": None,
+            "acwr": None,
+            "ramp_rate": None,
             "history": [],
             "history_days": FITNESS_HISTORY_DAYS,
             "history_start": None,
@@ -268,6 +344,9 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "warmup_recovered": False,
             "warmup_blocker_dates": [],
             "blocker_dates": [],
+            "acwr_acute_days": FITNESS_ACWR_ACUTE_DAYS,
+            "acwr_chronic_days": FITNESS_ACWR_CHRONIC_DAYS,
+            "ramp_period_days": FITNESS_RAMP_PERIOD_DAYS,
             "load_source": FITNESS_LOAD_SOURCE,
             "algorithm_version": 1,
             "max_hr": self.user_max_hr,
