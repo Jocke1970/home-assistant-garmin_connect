@@ -5,10 +5,12 @@ on:
     branches:
       - main
       - ng
+      - feature/garmin-fitness
   pull_request:
     branches:
       - main
       - ng
+  workflow_dispatch:
 
 permissions:
   contents: read

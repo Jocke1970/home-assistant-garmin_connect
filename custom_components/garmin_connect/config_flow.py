@@ -28,12 +28,17 @@ from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 
 from .const import (
     CONF_CLIENT_ID,
+    CONF_FITNESS_MAX_HR,
+    CONF_FITNESS_SEX,
     CONF_IS_CN,
     CONF_REFRESH_TOKEN,
     CONF_SCAN_INTERVAL,
     CONF_TOKEN,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    FITNESS_MAX_HR_MAX,
+    FITNESS_MAX_HR_MIN,
+    FITNESS_SEX_OPTIONS,
     MAX_SCAN_INTERVAL,
     MIN_SCAN_INTERVAL,
 )
@@ -302,14 +307,23 @@ class GarminConnectOptionsFlow(OptionsFlow):
     """Handle options flow for Garmin Connect."""
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Manage the options."""
+        """Manage options, including the optional Garmin Fitness TRIMP profile."""
+        errors: dict[str, str] = {}
+
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            fitness_max_hr = user_input.get(CONF_FITNESS_MAX_HR)
+            fitness_sex = user_input.get(CONF_FITNESS_SEX)
+            if (fitness_max_hr is None) != (fitness_sex is None):
+                errors["base"] = "fitness_settings_incomplete"
+            else:
+                return self.async_create_entry(title="", data=user_input)
 
         current_scan_interval = self.config_entry.options.get(
             CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
         )
         current_is_cn = self.config_entry.options.get(CONF_IS_CN, False)
+        current_fitness_max_hr = self.config_entry.options.get(CONF_FITNESS_MAX_HR)
+        current_fitness_sex = self.config_entry.options.get(CONF_FITNESS_SEX)
 
         return self.async_show_form(
             step_id="init",
@@ -323,6 +337,18 @@ class GarminConnectOptionsFlow(OptionsFlow):
                         vol.Range(min=MIN_SCAN_INTERVAL, max=MAX_SCAN_INTERVAL),
                     ),
                     vol.Optional(CONF_IS_CN, default=current_is_cn): bool,
+                    vol.Optional(
+                        CONF_FITNESS_MAX_HR,
+                        description={"suggested_value": current_fitness_max_hr},
+                    ): vol.All(
+                        vol.Coerce(int),
+                        vol.Range(min=FITNESS_MAX_HR_MIN, max=FITNESS_MAX_HR_MAX),
+                    ),
+                    vol.Optional(
+                        CONF_FITNESS_SEX,
+                        description={"suggested_value": current_fitness_sex},
+                    ): vol.In(FITNESS_SEX_OPTIONS),
                 }
             ),
+            errors=errors,
         )
