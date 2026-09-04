@@ -34,6 +34,7 @@ from .coordinator import (
     NutritionCoordinator,
     TrainingCoordinator,
 )
+from .gear_activity_tracker import async_setup_gear_activity_tracker
 from .services import async_setup_services, async_unload_services
 
 _LOGGER = logging.getLogger(__name__)
@@ -204,6 +205,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: GarminConnectConfigEntry
     )
 
     entry.runtime_data = coordinators
+
+    gear_activity_unsub = await async_setup_gear_activity_tracker(
+        hass,
+        entry,
+        coordinators.activity,
+    )
+    entry.async_on_unload(gear_activity_unsub)
 
     # Snapshot options so the update listener can tell what changed.
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = dict(entry.options)
