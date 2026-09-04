@@ -54,8 +54,12 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             update_interval=FITNESS_UPDATE_INTERVAL,
         )
         self.client = client
-        self.user_max_hr = entry.options.get(CONF_FITNESS_MAX_HR)
-        self.sex = entry.options.get(CONF_FITNESS_SEX)
+        raw_max_hr = entry.options.get(CONF_FITNESS_MAX_HR)
+        raw_sex = entry.options.get(CONF_FITNESS_SEX)
+        self.user_max_hr: float | None = (
+            float(raw_max_hr) if raw_max_hr is not None else None
+        )
+        self.sex: str | None = str(raw_sex) if raw_sex is not None else None
 
     @property
     def configured(self) -> bool:
@@ -67,6 +71,11 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not self.configured:
             return self._empty_data(configured=False)
 
+        user_max_hr = self.user_max_hr
+        sex = self.sex
+        assert user_max_hr is not None
+        assert sex is not None
+
         try:
             # Temporary adapter boundary: once a distributable ha-garmin Fitness
             # release exists, replace this call with
@@ -75,8 +84,8 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.client,
                 days=FITNESS_HISTORY_DAYS,
                 end_date=dt_util.now().date(),
-                user_max_hr=float(self.user_max_hr),
-                sex=self.sex,
+                user_max_hr=user_max_hr,
+                sex=sex,
             )
         except GarminAuthError as err:
             raise ConfigEntryAuthFailed("Authentication failed") from err
@@ -105,8 +114,8 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "blocker_dates": blockers,
             "load_source": FITNESS_LOAD_SOURCE,
             "algorithm_version": probe.get("algorithm_version"),
-            "max_hr": self.user_max_hr,
-            "sex": self.sex,
+            "max_hr": user_max_hr,
+            "sex": sex,
         }
 
     def _empty_data(self, *, configured: bool) -> dict[str, Any]:
