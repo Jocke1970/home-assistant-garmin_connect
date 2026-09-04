@@ -14,12 +14,15 @@ from homeassistant.helpers import entity_registry as er
 
 from .const import (
     CONF_CLIENT_ID,
+    CONF_FITNESS_MAX_HR,
+    CONF_FITNESS_SEX,
     CONF_IS_CN,
     CONF_REFRESH_TOKEN,
     CONF_SCAN_INTERVAL,
     CONF_TOKEN,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    FITNESS_DATA_KEY,
 )
 from .coordinator import (
     ActivityCoordinator,
@@ -34,6 +37,8 @@ from .coordinator import (
     NutritionCoordinator,
     TrainingCoordinator,
 )
+from .fitness_coordinator import FitnessCoordinator
+from .fitness_sensor import async_add_fitness_sensor_entities
 from .fitness_service import (
     async_setup_fitness_probe_service,
     async_unload_fitness_probe_service,
@@ -189,6 +194,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: GarminConnectConfigEntry
         menstrual=MenstrualCoordinator(hass, entry, client, auth),
         nutrition=NutritionCoordinator(hass, entry, client, auth),
     )
+    fitness = FitnessCoordinator(hass, entry, client)
 
     try:
         await coordinators.core.async_config_entry_first_refresh()
@@ -204,6 +210,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: GarminConnectConfigEntry
         coordinators.blood_pressure.async_refresh(),
         coordinators.menstrual.async_refresh(),
         coordinators.nutrition.async_refresh(),
+        fitness.async_refresh(),
         return_exceptions=True,
     )
 
@@ -211,8 +218,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: GarminConnectConfigEntry
 
     # Snapshot options so the update listener can tell what changed.
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = dict(entry.options)
+    hass.data.setdefault(FITNESS_DATA_KEY, {})[entry.entry_id] = fitness
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    await async_add_fitness_sensor_entities(hass, entry, fitness)
 
     if not hass.services.has_service(DOMAIN, "set_active_gear"):
         await async_setup_services(hass)
@@ -228,15 +237,16 @@ async def async_options_update_listener(
 ) -> None:
     """Handle options update.
 
-    Update coordinator scan intervals directly when only the scan_interval
-    changed. Reload the config entry when the China region option changes,
-    since that affects the underlying API endpoints.
+    Update coordinator scan intervals directly when only the scan interval
+    changed. Reload the config entry when region or Fitness profile inputs
+    change because both are constructor-level settings.
     """
     coordinators = entry.runtime_data
     previous_options = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
     current_options = entry.options
 
-    if previous_options.get(CONF_IS_CN, False) != current_options.get(CONF_IS_CN, False):
+    reload_keys = (CONF_IS_CN, CONF_FITNESS_MAX_HR, CONF_FITNESS_SEX)
+    if any(previous_options.get(key) != current_options.get(key) for key in reload_keys):
         await hass.config_entries.async_reload(entry.entry_id)
         return
 
@@ -265,6 +275,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: GarminConnectConfigEntr
 
     if DOMAIN in hass.data and entry.entry_id in hass.data[DOMAIN]:
         hass.data[DOMAIN].pop(entry.entry_id, None)
+    if FITNESS_DATA_KEY in hass.data:
+        hass.data[FITNESS_DATA_KEY].pop(entry.entry_id, None)
 
     if unload_ok and len(hass.config_entries.async_entries(DOMAIN)) == 1:
         await async_unload_services(hass)
