@@ -3,6 +3,7 @@
 from datetime import date, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from homeassistant.const import Platform
 
 from custom_components.garmin_connect.const import (
@@ -52,6 +53,24 @@ def _training_points(days: int = 180) -> list[dict]:
     return points
 
 
+@pytest.fixture(autouse=True)
+def mock_strain_calibration():
+    calibration = {
+        "personal_trimp_max": 120.0,
+        "personal_trimp_max_source": "calibrated",
+        "strain_calibration_sessions": 40,
+        "strain_calibration_min_sessions": 30,
+        "strain_calibration_multiplier": 1.2,
+        "strain_calibration_complete": True,
+    }
+    with patch(
+        "custom_components.garmin_connect.fitness_coordinator.async_fetch_strain_calibration",
+        new_callable=AsyncMock,
+        return_value=calibration,
+    ) as mocked:
+        yield mocked
+
+
 async def test_fitness_coordinator_does_not_call_garmin_until_configured() -> None:
     coordinator = _coordinator()
 
@@ -68,6 +87,7 @@ async def test_fitness_coordinator_does_not_call_garmin_until_configured() -> No
     assert data["daily_load"] is None
     assert data["acwr"] is None
     assert data["ramp_rate"] is None
+    assert data["strain"] is None
     assert data["history_days"] == 90
     assert data["calculation_days"] == 180
     assert data["warmup_days"] == 90
@@ -75,6 +95,8 @@ async def test_fitness_coordinator_does_not_call_garmin_until_configured() -> No
     assert data["acwr_acute_days"] == 7
     assert data["acwr_chronic_days"] == 28
     assert data["ramp_period_days"] == 7
+    assert data["strain_scale_max"] == 21.0
+    assert data["hard_day_threshold"] == 14.0
 
 
 async def test_fitness_coordinator_uses_warmup_and_exposes_last_90_days() -> None:
@@ -119,6 +141,7 @@ async def test_fitness_coordinator_uses_warmup_and_exposes_last_90_days() -> Non
     assert data["tsb"] == 9.1
     assert data["acwr"] == 4.0
     assert data["ramp_rate"] == -0.2
+    assert data["strain"] == 1.27
     assert data["load_source"] == "trimp"
     assert data["algorithm_version"] == 1
     assert data["history_days"] == 90
@@ -127,8 +150,10 @@ async def test_fitness_coordinator_uses_warmup_and_exposes_last_90_days() -> Non
     assert data["history_end"] == "2026-09-04"
     assert data["history"][0]["acwr"] is None
     assert data["history"][0]["ramp_rate"] == -0.35
+    assert data["history"][0]["strain"] == 0.0
     assert data["history"][-1]["acwr"] == 4.0
     assert data["history"][-1]["ramp_rate"] == -0.2
+    assert data["history"][-1]["strain"] == 1.27
     assert data["calculation_days"] == 180
     assert data["calculation_start"] == "2026-03-09"
     assert data["calculation_end"] == "2026-09-04"
@@ -141,6 +166,13 @@ async def test_fitness_coordinator_uses_warmup_and_exposes_last_90_days() -> Non
     assert data["acwr_acute_days"] == 7
     assert data["acwr_chronic_days"] == 28
     assert data["ramp_period_days"] == 7
+    assert data["strain_scale_max"] == 21.0
+    assert data["hard_day_threshold"] == 14.0
+    assert data["personal_trimp_max"] == 120.0
+    assert data["personal_trimp_max_source"] == "calibrated"
+    assert data["strain_calibration_sessions"] == 40
+    assert data["strain_calibration_min_sessions"] == 30
+    assert data["strain_calibration_complete"] is True
 
 
 async def test_fitness_coordinator_recovers_from_old_warmup_blocker() -> None:
@@ -199,6 +231,7 @@ async def test_fitness_coordinator_recovers_from_old_warmup_blocker() -> None:
     assert data["history_end"] == "2026-09-04"
     assert data["acwr"] == 4.0
     assert data["ramp_rate"] == -0.55
+    assert data["strain"] == 1.27
     assert data["blocker_dates"] == []
     assert data["warmup_blocker_dates"] == ["2026-03-15"]
     assert data["warmup_recovered"] is True
@@ -241,6 +274,7 @@ async def test_fitness_coordinator_does_not_recover_recent_warmup_blocker() -> N
     assert data["history"] == []
     assert data["acwr"] is None
     assert data["ramp_rate"] is None
+    assert data["strain"] is None
     assert data["blocker_dates"] == ["2026-05-15"]
     assert data["warmup_blocker_dates"] == ["2026-05-15"]
     assert data["warmup_recovered"] is False
@@ -281,6 +315,7 @@ async def test_fitness_coordinator_refuses_short_calculation_series() -> None:
     assert data["ctl"] is None
     assert data["acwr"] is None
     assert data["ramp_rate"] is None
+    assert data["strain"] is None
 
 
 def test_fitness_sensor_exposes_value_and_provenance_without_history_attribute() -> None:
@@ -296,6 +331,7 @@ def test_fitness_sensor_exposes_value_and_provenance_without_history_attribute()
         "tsb": 9.281,
         "acwr": 0.82,
         "ramp_rate": -1.25,
+        "strain": 1.08,
         "history": [{"date": "2026-09-03", "daily_load": 6.708}],
         "history_days": 90,
         "history_start": "2026-06-06",
@@ -314,6 +350,14 @@ def test_fitness_sensor_exposes_value_and_provenance_without_history_attribute()
         "acwr_acute_days": 7,
         "acwr_chronic_days": 28,
         "ramp_period_days": 7,
+        "strain_scale_max": 21.0,
+        "hard_day_threshold": 14.0,
+        "personal_trimp_max": 120.0,
+        "personal_trimp_max_source": "calibrated",
+        "strain_calibration_sessions": 40,
+        "strain_calibration_min_sessions": 30,
+        "strain_calibration_multiplier": 1.2,
+        "strain_calibration_complete": True,
         "load_source": "trimp",
         "algorithm_version": 1,
         "max_hr": 175,
@@ -339,6 +383,11 @@ def test_fitness_sensor_exposes_value_and_provenance_without_history_attribute()
     assert sensor.extra_state_attributes["acwr_acute_days"] == 7
     assert sensor.extra_state_attributes["acwr_chronic_days"] == 28
     assert sensor.extra_state_attributes["ramp_period_days"] == 7
+    assert sensor.extra_state_attributes["strain_scale_max"] == 21.0
+    assert sensor.extra_state_attributes["hard_day_threshold"] == 14.0
+    assert sensor.extra_state_attributes["personal_trimp_max"] == 120.0
+    assert sensor.extra_state_attributes["personal_trimp_max_source"] == "calibrated"
+    assert sensor.extra_state_attributes["strain_calibration_sessions"] == 40
     assert "history" not in sensor.extra_state_attributes
 
     acwr_sensor = GarminFitnessSensor(
@@ -351,10 +400,17 @@ def test_fitness_sensor_exposes_value_and_provenance_without_history_attribute()
         next(item for item in FITNESS_SENSOR_DESCRIPTIONS if item.key == "ramp_rate"),
         "entry_1",
     )
+    strain_sensor = GarminFitnessSensor(
+        coordinator,
+        next(item for item in FITNESS_SENSOR_DESCRIPTIONS if item.key == "strain"),
+        "entry_1",
+    )
     assert acwr_sensor.native_value == 0.82
     assert acwr_sensor.native_unit_of_measurement is None
     assert ramp_sensor.native_value == -1.25
     assert ramp_sensor.native_unit_of_measurement == "TRIMP"
+    assert strain_sensor.native_value == 1.08
+    assert strain_sensor.native_unit_of_measurement is None
 
 
 async def test_add_fitness_entities_uses_loaded_garmin_sensor_platform() -> None:
@@ -374,7 +430,7 @@ async def test_add_fitness_entities_uses_loaded_garmin_sensor_platform() -> None
 
     platform.async_add_entities.assert_awaited_once()
     entities = list(platform.async_add_entities.await_args.args[0])
-    assert len(entities) == 6
+    assert len(entities) == 7
     assert {entity.unique_id for entity in entities} == {
         "entry_1_fitness_daily_load",
         "entry_1_fitness_ctl",
@@ -382,4 +438,5 @@ async def test_add_fitness_entities_uses_loaded_garmin_sensor_platform() -> None
         "entry_1_fitness_tsb",
         "entry_1_fitness_acwr",
         "entry_1_fitness_ramp_rate",
+        "entry_1_fitness_strain",
     }
