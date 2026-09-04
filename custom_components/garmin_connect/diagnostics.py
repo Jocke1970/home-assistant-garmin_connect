@@ -21,7 +21,29 @@ TO_REDACT = {
     "profileImageUrlMedium",
     "profileImageUrlSmall",
     "profileImageUrlLarge",
+    "userProfilePk",
+    "profileId",
 }
+
+
+def _gear_probe_data(data: dict[str, Any]) -> dict[str, Any]:
+    """Return raw Gear payloads for diagnostics, with account identifiers redacted.
+
+    Garmin expanded Gear tracking in 2026 beyond distance-only usage. Keep the
+    probe in diagnostics rather than entity attributes so we can inspect the
+    currently returned schema without polluting Recorder or changing entity
+    semantics while field names are still being established.
+    """
+    gear = data.get("gear")
+    gear_stats = data.get("gearStats")
+
+    return async_redact_data(
+        {
+            "gear": gear if isinstance(gear, list) else [],
+            "gearStats": gear_stats if isinstance(gear_stats, list) else [],
+        },
+        TO_REDACT,
+    )
 
 
 async def async_get_config_entry_diagnostics(
@@ -44,7 +66,10 @@ async def async_get_config_entry_diagnostics(
             "data_keys_sample": data_keys[:50] if len(data_keys) > 50 else data_keys,
         }
 
+    gear_data = coordinators.gear.data or {}
+
     return {
         "entry_data": async_redact_data(dict(entry.data), TO_REDACT),
         "coordinators": coordinator_info,
+        "gear_probe": _gear_probe_data(gear_data),
     }
