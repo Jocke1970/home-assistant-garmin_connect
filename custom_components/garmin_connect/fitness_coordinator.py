@@ -10,7 +10,7 @@ kept inside this module.
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Any, Literal, cast
 
 from aiohttp import ClientError
@@ -28,6 +28,7 @@ from .const import (
     DOMAIN,
     FITNESS_CALCULATION_DAYS,
     FITNESS_HISTORY_DAYS,
+    FITNESS_RECOVERY_MIN_WARMUP_DAYS,
     FITNESS_WARMUP_DAYS,
 )
 from .fitness_probe import build_fitness_probe
@@ -37,6 +38,18 @@ _LOGGER = logging.getLogger(__name__)
 FITNESS_UPDATE_INTERVAL = timedelta(hours=1)
 FITNESS_LOAD_SOURCE = "trimp"
 FitnessSex = Literal["male", "female"]
+
+
+def _parse_date(value: Any) -> date | None:
+    """Return an ISO calendar date, otherwise None."""
+    if isinstance(value, date):
+        return value
+    if not isinstance(value, str):
+        return None
+    try:
+        return date.fromisoformat(value[:10])
+    except ValueError:
+        return None
 
 
 class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -78,6 +91,12 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         left edge of the displayed 90-day window makes historical values drift
         as that window advances. We therefore calculate over 180 days and expose
         only the final 90 days to Home Assistant and Recorder.
+
+        A missing TRIMP activity inside the visible 90-day window always blocks
+        the series. A blocker that is only in the older warm-up section may be
+        recovered by restarting the strict probe on the following day, but only
+        when enough complete warm-up days remain for the EMA seed to decay.
+        Missing load is never converted to zero.
         """
         if not self.configured:
             return self._empty_data(configured=False)
@@ -87,6 +106,8 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         assert user_max_hr is not None
         assert sex is not None
 
+        requested_end = dt_util.now().date()
+
         try:
             # Temporary adapter boundary: once a distributable ha-garmin Fitness
             # release exists, replace this call with
@@ -94,20 +115,81 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             probe = await build_fitness_probe(
                 self.client,
                 days=FITNESS_CALCULATION_DAYS,
-                end_date=dt_util.now().date(),
+                end_date=requested_end,
                 user_max_hr=user_max_hr,
                 sex=sex,
             )
+
+            calculation_window = probe.get("window") or {}
+            calculation_end = (
+                _parse_date(calculation_window.get("end_date")) or requested_end
+            )
+            visible_start = calculation_end - timedelta(
+                days=FITNESS_HISTORY_DAYS - 1
+            )
+
+            training_series = probe.get("training_series") or {}
+            trimp_series = training_series.get("trimp") or {}
+            raw_blockers = trimp_series.get("blocker_dates") or []
+            blockers = [str(value) for value in raw_blockers]
+            parsed_blockers = [_parse_date(value) for value in raw_blockers]
+
+            effective_probe = probe
+            effective_series = trimp_series
+            remaining_blockers = blockers
+            warmup_blocker_dates: list[str] = []
+            warmup_recovered = False
+            effective_warmup_days = FITNESS_WARMUP_DAYS
+
+            if blockers and all(value is not None for value in parsed_blockers):
+                blocker_dates = cast(list[date], parsed_blockers)
+                warmup_blocker_dates = [
+                    blocker.isoformat()
+                    for blocker in blocker_dates
+                    if blocker < visible_start
+                ]
+                last_blocker = max(blocker_dates)
+                recovery_start = last_blocker + timedelta(days=1)
+                recovery_warmup_days = (visible_start - recovery_start).days
+                recovery_days = (calculation_end - recovery_start).days + 1
+
+                can_recover = (
+                    last_blocker < visible_start
+                    and recovery_warmup_days >= FITNESS_RECOVERY_MIN_WARMUP_DAYS
+                    and recovery_days >= FITNESS_HISTORY_DAYS
+                )
+                if can_recover:
+                    recovery_probe = await build_fitness_probe(
+                        self.client,
+                        days=recovery_days,
+                        end_date=calculation_end,
+                        user_max_hr=user_max_hr,
+                        sex=sex,
+                    )
+                    recovery_training_series = (
+                        recovery_probe.get("training_series") or {}
+                    )
+                    recovery_series = recovery_training_series.get("trimp") or {}
+                    recovery_blockers = recovery_series.get("blocker_dates") or []
+                    if bool(recovery_series.get("ready")) and not recovery_blockers:
+                        effective_probe = recovery_probe
+                        effective_series = recovery_series
+                        remaining_blockers = []
+                        warmup_recovered = True
+                        effective_warmup_days = recovery_warmup_days
+                        _LOGGER.debug(
+                            "Recovered Garmin Fitness series after warm-up blocker %s "
+                            "with %s complete warm-up days",
+                            last_blocker,
+                            recovery_warmup_days,
+                        )
         except GarminAuthError as err:
             raise ConfigEntryAuthFailed("Authentication failed") from err
         except (GarminConnectError, ClientError, RuntimeError, ValueError) as err:
             raise UpdateFailed(f"Error fetching Garmin Fitness data: {err}") from err
 
-        training_series = probe.get("training_series") or {}
-        trimp_series = training_series.get("trimp") or {}
-        calculation_window = probe.get("window") or {}
-        blockers = trimp_series.get("blocker_dates") or []
-        all_points = trimp_series.get("points") or []
+        effective_window = effective_probe.get("window") or {}
+        all_points = effective_series.get("points") or []
         if not isinstance(all_points, list):
             all_points = []
 
@@ -115,10 +197,10 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         visible_history_complete = len(visible_points) == FITNESS_HISTORY_DAYS
         latest = visible_points[-1] if visible_points else {}
         ready = (
-            bool(trimp_series.get("ready"))
+            bool(effective_series.get("ready"))
             and visible_history_complete
             and bool(latest)
-            and not blockers
+            and not remaining_blockers
         )
 
         history_start = (
@@ -150,7 +232,12 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "calculation_start": calculation_window.get("start_date"),
             "calculation_end": calculation_window.get("end_date"),
             "warmup_days": FITNESS_WARMUP_DAYS,
-            "blocker_dates": blockers,
+            "effective_calculation_days": effective_window.get("days"),
+            "effective_calculation_start": effective_window.get("start_date"),
+            "effective_warmup_days": effective_warmup_days,
+            "warmup_recovered": warmup_recovered,
+            "warmup_blocker_dates": warmup_blocker_dates,
+            "blocker_dates": remaining_blockers,
             "load_source": FITNESS_LOAD_SOURCE,
             "algorithm_version": probe.get("algorithm_version"),
             "max_hr": user_max_hr,
@@ -175,6 +262,11 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "calculation_start": None,
             "calculation_end": None,
             "warmup_days": FITNESS_WARMUP_DAYS,
+            "effective_calculation_days": FITNESS_CALCULATION_DAYS,
+            "effective_calculation_start": None,
+            "effective_warmup_days": FITNESS_WARMUP_DAYS,
+            "warmup_recovered": False,
+            "warmup_blocker_dates": [],
             "blocker_dates": [],
             "load_source": FITNESS_LOAD_SOURCE,
             "algorithm_version": 1,
