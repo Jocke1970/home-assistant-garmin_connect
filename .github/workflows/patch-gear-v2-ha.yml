@@ -1,0 +1,87 @@
+name: One-shot HA Gear v2 patch
+
+on:
+  push:
+    branches: [feature/garmin-fitness]
+    paths:
+      - .github/workflows/patch-gear-v2-ha.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Apply Home Assistant Gear v2 patch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+
+          def replace_once(path: Path, old: str, new: str) -> None:
+              text = path.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one match, found {count}: {old[:100]!r}")
+              path.write_text(text.replace(old, new, 1))
+
+          sensor = Path("custom_components/garmin_connect/sensor.py")
+
+          replace_once(
+              sensor,
+              '''        self._gear_uuid = gear_uuid\n        self._gear_name = gear_name or "Unknown"\n        self._attr_native_unit_of_measurement = UnitOfLength.METERS\n        self._attr_device_class = SensorDeviceClass.DISTANCE\n        self._attr_state_class = SensorStateClass.TOTAL_INCREASING\n        self._attr_suggested_display_precision = 0\n''',
+              '''        self._gear_uuid = gear_uuid\n        self._gear_name = gear_name or "Unknown"\n        self._usage_type = "DISTANCE"\n        self._attr_state_class = SensorStateClass.TOTAL_INCREASING\n        self._configure_usage_metadata()\n''',
+          )
+
+          marker = '''    @property\n    def name(self) -> str:\n'''
+          helpers = '''    def _get_gear_stat(self) -> dict[str, Any] | None:\n        """Return the current coordinator record for this Gear UUID."""\n        if not self.coordinator.data:\n            return None\n        for gear_stat in self.coordinator.data.get("gearStats", []):\n            if (gear_stat.get("uuid") or gear_stat.get("gearUuid")) == self._gear_uuid:\n                return gear_stat\n        return None\n\n    def _configure_usage_metadata(self, gear_stat: dict[str, Any] | None = None) -> None:\n        """Configure state semantics from Garmin Gear v2 usageType."""\n        gear_stat = gear_stat or self._get_gear_stat() or {}\n        usage_type = str(gear_stat.get("usageType") or "DISTANCE").upper()\n        self._usage_type = usage_type\n\n        if usage_type == "DURATION":\n            self._attr_native_unit_of_measurement = UnitOfTime.HOURS\n            self._attr_device_class = SensorDeviceClass.DURATION\n            self._attr_suggested_display_precision = 2\n        elif usage_type == "DAYS":\n            self._attr_native_unit_of_measurement = UnitOfTime.DAYS\n            self._attr_device_class = SensorDeviceClass.DURATION\n            self._attr_suggested_display_precision = 0\n        elif usage_type == "ACTIVITIES":\n            self._attr_native_unit_of_measurement = "activities"\n            self._attr_device_class = None\n            self._attr_suggested_display_precision = 0\n        else:\n            # Legacy Gear and Garmin's DISTANCE mode remain distance sensors.\n            self._attr_native_unit_of_measurement = UnitOfLength.METERS\n            self._attr_device_class = SensorDeviceClass.DISTANCE\n            self._attr_suggested_display_precision = 0\n\n'''
+          replace_once(sensor, marker, helpers + marker)
+
+          old_native = '''    @property\n    def native_value(self) -> float | int | None:\n        """Return total distance for this gear in meters."""\n        if not self.coordinator.data:\n            return None\n\n        gear_stats = self.coordinator.data.get("gearStats", [])\n        for gear_stat in gear_stats:\n            if (gear_stat.get("uuid") or gear_stat.get("gearUuid")) == self._gear_uuid:\n                raw = gear_stat.get("totalDistance")\n                return cast(float | int | None, raw)\n\n        return None\n'''
+          new_native = '''    @property\n    def native_value(self) -> float | int | None:\n        """Return the Garmin-selected primary usage value for this Gear item."""\n        gear_stat = self._get_gear_stat()\n        if gear_stat is None:\n            return None\n\n        usage_type = str(gear_stat.get("usageType") or "DISTANCE").upper()\n        if usage_type != self._usage_type:\n            self._configure_usage_metadata(gear_stat)\n\n        if usage_type == "DURATION":\n            raw = gear_stat.get("durationUsedSeconds")\n            if isinstance(raw, int | float) and not isinstance(raw, bool):\n                return round(float(raw) / 3600, 2)\n            return None\n\n        if usage_type == "DAYS":\n            raw = gear_stat.get("daysUsed")\n            return cast(float | int | None, raw)\n\n        if usage_type == "ACTIVITIES":\n            raw = gear_stat.get("totalActivities")\n            return cast(float | int | None, raw)\n\n        raw = gear_stat.get("distanceUsedMeters")\n        if raw is None:\n            raw = gear_stat.get("totalDistance")\n        return cast(float | int | None, raw)\n'''
+          replace_once(sensor, old_native, new_native)
+
+          old_attrs = '''    @property\n    def extra_state_attributes(self) -> dict[str, Any]:\n        """Return gear details as attributes."""\n        if not self.coordinator.data:\n            return {}\n        for gear_stat in self.coordinator.data.get("gearStats", []):\n            if (gear_stat.get("uuid") or gear_stat.get("gearUuid")) == self._gear_uuid:\n                return {\n                    "gear_uuid": self._gear_uuid,\n                    "total_activities": gear_stat.get("totalActivities"),\n                    "date_begin": gear_stat.get("dateBegin"),\n                    "date_end": gear_stat.get("dateEnd"),\n                    "gear_make_name": gear_stat.get("gearMakeName"),\n                    "gear_model_name": gear_stat.get("gearModelName"),\n                    "gear_status_name": gear_stat.get("gearStatusName"),\n                    "custom_make_model": gear_stat.get("customMakeModel"),\n                    "maximum_meters": gear_stat.get("maximumMeters"),\n                    "default_for_activity": gear_stat.get("defaultForActivity", []),\n                    "default_for_activity_details": gear_stat.get(\n                        "defaultForActivityDetails", []\n                    ),\n                    "last_activity": gear_stat.get("lastActivity"),\n                }\n        return {}\n'''
+          new_attrs = '''    @property\n    def extra_state_attributes(self) -> dict[str, Any]:\n        """Return legacy and Garmin Gear v2 details as attributes."""\n        gear_stat = self._get_gear_stat()\n        if gear_stat is None:\n            return {}\n\n        duration_seconds = gear_stat.get("durationUsedSeconds")\n        duration_hours = (\n            round(float(duration_seconds) / 3600, 2)\n            if isinstance(duration_seconds, int | float)\n            and not isinstance(duration_seconds, bool)\n            else None\n        )\n        distance_used = gear_stat.get("distanceUsedMeters")\n        if distance_used is None:\n            distance_used = gear_stat.get("totalDistance")\n\n        return {\n            "gear_uuid": self._gear_uuid,\n            "total_activities": gear_stat.get("totalActivities"),\n            "date_begin": gear_stat.get("dateBegin"),\n            "date_end": gear_stat.get("dateEnd"),\n            "gear_make_name": gear_stat.get("gearMakeName"),\n            "gear_model_name": gear_stat.get("gearModelName"),\n            "gear_status_name": gear_stat.get("gearStatusName"),\n            "custom_make_model": gear_stat.get("customMakeModel"),\n            "maximum_meters": gear_stat.get("maximumMeters"),\n            "gear_name": gear_stat.get("gearName"),\n            "gear_type": gear_stat.get("gearType"),\n            "gear_type_name": gear_stat.get("gearTypeName"),\n            "gear_brand": gear_stat.get("brand") or gear_stat.get("gearMakeName"),\n            "gear_model": gear_stat.get("model") or gear_stat.get("gearModelName"),\n            "usage_type": gear_stat.get("usageType") or "DISTANCE",\n            "distance_used_meters": distance_used,\n            "duration_used_seconds": duration_seconds,\n            "duration_used_hours": duration_hours,\n            "days_used": gear_stat.get("daysUsed"),\n            "max_usage_duration_seconds": gear_stat.get("maxUsageDurationSeconds"),\n            "first_use_date": gear_stat.get("firstUseDate"),\n            "associated_activity_types": gear_stat.get("associatedActivityTypes", []),\n            "default_for_activity": gear_stat.get("defaultForActivity", []),\n            "default_for_activity_details": gear_stat.get(\n                "defaultForActivityDetails", []\n            ),\n            "last_activity": gear_stat.get("lastActivity"),\n        }\n'''
+          replace_once(sensor, old_attrs, new_attrs)
+
+          tests = Path("tests/test_sensor.py")
+          import_anchor = '''from unittest.mock import MagicMock, patch\n\n'''
+          import_new = '''from unittest.mock import MagicMock, patch\n\nfrom homeassistant.components.sensor import SensorDeviceClass\nfrom homeassistant.const import UnitOfTime\n\n'''
+          replace_once(tests, import_anchor, import_new)
+
+          duration_test_anchor = '''def test_gear_sensor_none_for_unknown_uuid() -> None:\n'''
+          duration_tests = '''def test_gear_sensor_duration_mode_uses_hours() -> None:\n    """DURATION Gear uses Garmin durationUsedSeconds as the sensor state."""\n    coord = MagicMock()\n    coord.data = {\n        "gearStats": [\n            {\n                "uuid": "headwind",\n                "usageType": "DURATION",\n                "durationUsedSeconds": 489499,\n                "distanceUsedMeters": 3240848.9,\n                "totalActivities": 224,\n            }\n        ]\n    }\n    sensor = GarminConnectGearSensor(\n        coord, gear_uuid="headwind", gear_name="Wahoo Headwind", entry_id="eid"\n    )\n\n    assert sensor.native_value == 135.97\n    assert sensor.native_unit_of_measurement == UnitOfTime.HOURS\n    assert sensor.device_class == SensorDeviceClass.DURATION\n\n\ndef test_gear_sensor_v2_attributes() -> None:\n    """Gear v2 taxonomy and usage metadata are exposed to HA consumers."""\n    coord = MagicMock()\n    coord.data = {\n        "gearStats": [\n            {\n                "uuid": "chain",\n                "gearName": "Kedja",\n                "gearType": "BIKE_COMPONENT",\n                "gearTypeName": "Other",\n                "brand": "Shimano",\n                "model": "CN-HG701",\n                "usageType": "DISTANCE",\n                "distanceUsedMeters": 12345.0,\n                "durationUsedSeconds": 3600,\n                "daysUsed": 12,\n                "totalActivities": 10,\n                "associatedActivityTypes": [\n                    {\n                        "activityTypeKey": "indoor_cycling",\n                        "defaultGear": True,\n                        "preferredGear": False,\n                    }\n                ],\n            }\n        ]\n    }\n    sensor = GarminConnectGearSensor(\n        coord, gear_uuid="chain", gear_name="Kedja", entry_id="eid"\n    )\n\n    attrs = sensor.extra_state_attributes\n    assert attrs["gear_name"] == "Kedja"\n    assert attrs["gear_type"] == "BIKE_COMPONENT"\n    assert attrs["gear_brand"] == "Shimano"\n    assert attrs["gear_model"] == "CN-HG701"\n    assert attrs["usage_type"] == "DISTANCE"\n    assert attrs["distance_used_meters"] == 12345.0\n    assert attrs["duration_used_hours"] == 1.0\n    assert attrs["days_used"] == 12\n    assert attrs["associated_activity_types"][0]["activityTypeKey"] == "indoor_cycling"\n\n\n'''
+          replace_once(tests, duration_test_anchor, duration_tests + duration_test_anchor)
+
+          manifest = Path("custom_components/garmin_connect/manifest.json")
+          data = json.loads(manifest.read_text())
+          data["requirements"] = [\n              "ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@62fa3e06436c6059082c28a168e7008cb5fdd99c"\n          ]
+          data["version"] = "3.0.21-fitness-probe.13"
+          manifest.write_text(json.dumps(data, indent=2) + "\n")
+          PY
+
+      - name: Install test dependencies
+        run: |
+          pip install -r requirements.txt -r requirements_lint.txt
+
+      - name: Run focused checks
+        run: |
+          pre-commit run --all-files --hook-stage manual --config .github/pre-commit-config.yaml
+          pytest tests/test_sensor.py -q
+
+      - name: Commit patch and remove one-shot workflow
+        run: |
+          rm .github/workflows/patch-gear-v2-ha.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add custom_components/garmin_connect/sensor.py custom_components/garmin_connect/manifest.json tests/test_sensor.py .github/workflows/patch-gear-v2-ha.yml
+          git commit -m "feat: expose Garmin Gear v2 usage in HA"
+          git push
