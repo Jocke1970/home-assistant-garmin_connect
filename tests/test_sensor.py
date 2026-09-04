@@ -3,6 +3,9 @@
 import json
 from unittest.mock import MagicMock, patch
 
+from homeassistant.components.sensor import SensorDeviceClass
+from homeassistant.const import UnitOfTime
+
 from custom_components.garmin_connect.sensor import (
     _COORDINATOR_SENSOR_MAP,
     ACTIVITY_TRACKING_SENSORS,
@@ -916,3 +919,69 @@ def test_route_polyline_remains_available_live() -> None:
 
     assert len(sensor.extra_state_attributes["polyline"]) == 10
     assert sensor.native_value == 10
+
+
+def test_gear_sensor_duration_mode_uses_hours() -> None:
+    """DURATION Gear uses Garmin durationUsedSeconds as the sensor state."""
+    coord = MagicMock()
+    coord.data = {
+        "gearStats": [
+            {
+                "uuid": "headwind",
+                "usageType": "DURATION",
+                "durationUsedSeconds": 489499,
+                "distanceUsedMeters": 3240848.9,
+                "totalActivities": 224,
+            }
+        ]
+    }
+    gear_sensor = GarminConnectGearSensor(
+        coord, gear_uuid="headwind", gear_name="Wahoo Headwind", entry_id="eid"
+    )
+
+    assert gear_sensor.native_value == 135.97
+    assert gear_sensor.native_unit_of_measurement == UnitOfTime.HOURS
+    assert gear_sensor.device_class == SensorDeviceClass.DURATION
+
+
+def test_gear_sensor_v2_attributes() -> None:
+    """Gear v2 taxonomy and usage metadata are exposed to HA consumers."""
+    coord = MagicMock()
+    coord.data = {
+        "gearStats": [
+            {
+                "uuid": "chain",
+                "gearName": "Kedja",
+                "gearType": "BIKE_COMPONENT",
+                "gearTypeName": "Other",
+                "brand": "Shimano",
+                "model": "CN-HG701",
+                "usageType": "DISTANCE",
+                "distanceUsedMeters": 12345.0,
+                "durationUsedSeconds": 3600,
+                "daysUsed": 12,
+                "totalActivities": 10,
+                "associatedActivityTypes": [
+                    {
+                        "activityTypeKey": "indoor_cycling",
+                        "defaultGear": True,
+                        "preferredGear": False,
+                    }
+                ],
+            }
+        ]
+    }
+    gear_sensor = GarminConnectGearSensor(
+        coord, gear_uuid="chain", gear_name="Kedja", entry_id="eid"
+    )
+
+    attrs = gear_sensor.extra_state_attributes
+    assert attrs["gear_name"] == "Kedja"
+    assert attrs["gear_type"] == "BIKE_COMPONENT"
+    assert attrs["gear_brand"] == "Shimano"
+    assert attrs["gear_model"] == "CN-HG701"
+    assert attrs["usage_type"] == "DISTANCE"
+    assert attrs["distance_used_meters"] == 12345.0
+    assert attrs["duration_used_hours"] == 1.0
+    assert attrs["days_used"] == 12
+    assert attrs["associated_activity_types"][0]["activityTypeKey"] == "indoor_cycling"

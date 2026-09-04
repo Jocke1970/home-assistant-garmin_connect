@@ -1906,10 +1906,9 @@ class GarminConnectGearSensor(CoordinatorEntity[GearCoordinator], SensorEntity):
         super().__init__(coordinator)
         self._gear_uuid = gear_uuid
         self._gear_name = gear_name or "Unknown"
-        self._attr_native_unit_of_measurement = UnitOfLength.METERS
-        self._attr_device_class = SensorDeviceClass.DISTANCE
+        self._usage_type = "DISTANCE"
         self._attr_state_class = SensorStateClass.TOTAL_INCREASING
-        self._attr_suggested_display_precision = 0
+        self._configure_usage_metadata()
         self._attr_unique_id = f"{entry_id}_gear_{gear_uuid}"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry_id)},
@@ -1918,6 +1917,33 @@ class GarminConnectGearSensor(CoordinatorEntity[GearCoordinator], SensorEntity):
             entry_type=DeviceEntryType.SERVICE,
         )
 
+    def _get_gear_stat(self) -> dict[str, Any] | None:
+        """Return the current coordinator record for this Gear UUID."""
+        if not self.coordinator.data:
+            return None
+        for gear_stat in self.coordinator.data.get("gearStats", []):
+            if (gear_stat.get("uuid") or gear_stat.get("gearUuid")) == self._gear_uuid:
+                return cast(dict[str, Any], gear_stat)
+        return None
+
+    def _configure_usage_metadata(
+        self, gear_stat: dict[str, Any] | None = None
+    ) -> None:
+        """Configure state semantics from Garmin Gear v2 usageType."""
+        gear_stat = gear_stat or self._get_gear_stat() or {}
+        usage_type = str(gear_stat.get("usageType") or "DISTANCE").upper()
+        self._usage_type = usage_type
+
+        if usage_type == "DURATION":
+            self._attr_native_unit_of_measurement = UnitOfTime.HOURS
+            self._attr_device_class = SensorDeviceClass.DURATION
+            self._attr_suggested_display_precision = 2
+        else:
+            # Garmin v2 DISTANCE and legacy Gear remain distance sensors.
+            self._attr_native_unit_of_measurement = UnitOfLength.METERS
+            self._attr_device_class = SensorDeviceClass.DISTANCE
+            self._attr_suggested_display_precision = 0
+
     @property
     def name(self) -> str:
         """Return the name of the sensor."""
@@ -1925,42 +1951,73 @@ class GarminConnectGearSensor(CoordinatorEntity[GearCoordinator], SensorEntity):
 
     @property
     def native_value(self) -> float | int | None:
-        """Return total distance for this gear in meters."""
-        if not self.coordinator.data:
+        """Return the Garmin-selected primary usage value for this Gear item."""
+        gear_stat = self._get_gear_stat()
+        if gear_stat is None:
             return None
 
-        gear_stats = self.coordinator.data.get("gearStats", [])
-        for gear_stat in gear_stats:
-            if (gear_stat.get("uuid") or gear_stat.get("gearUuid")) == self._gear_uuid:
-                raw = gear_stat.get("totalDistance")
-                return cast(float | int | None, raw)
+        usage_type = str(gear_stat.get("usageType") or "DISTANCE").upper()
+        if usage_type != self._usage_type:
+            self._configure_usage_metadata(gear_stat)
 
-        return None
+        if usage_type == "DURATION":
+            raw = gear_stat.get("durationUsedSeconds")
+            if isinstance(raw, int | float) and not isinstance(raw, bool):
+                return round(float(raw) / 3600, 2)
+            return None
+
+        raw = gear_stat.get("distanceUsedMeters")
+        if raw is None:
+            raw = gear_stat.get("totalDistance")
+        return cast(float | int | None, raw)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return gear details as attributes."""
-        if not self.coordinator.data:
+        """Return legacy and Garmin Gear v2 details as attributes."""
+        gear_stat = self._get_gear_stat()
+        if gear_stat is None:
             return {}
-        for gear_stat in self.coordinator.data.get("gearStats", []):
-            if (gear_stat.get("uuid") or gear_stat.get("gearUuid")) == self._gear_uuid:
-                return {
-                    "gear_uuid": self._gear_uuid,
-                    "total_activities": gear_stat.get("totalActivities"),
-                    "date_begin": gear_stat.get("dateBegin"),
-                    "date_end": gear_stat.get("dateEnd"),
-                    "gear_make_name": gear_stat.get("gearMakeName"),
-                    "gear_model_name": gear_stat.get("gearModelName"),
-                    "gear_status_name": gear_stat.get("gearStatusName"),
-                    "custom_make_model": gear_stat.get("customMakeModel"),
-                    "maximum_meters": gear_stat.get("maximumMeters"),
-                    "default_for_activity": gear_stat.get("defaultForActivity", []),
-                    "default_for_activity_details": gear_stat.get(
-                        "defaultForActivityDetails", []
-                    ),
-                    "last_activity": gear_stat.get("lastActivity"),
-                }
-        return {}
+
+        duration_seconds = gear_stat.get("durationUsedSeconds")
+        duration_hours = (
+            round(float(duration_seconds) / 3600, 2)
+            if isinstance(duration_seconds, int | float)
+            and not isinstance(duration_seconds, bool)
+            else None
+        )
+        distance_used = gear_stat.get("distanceUsedMeters")
+        if distance_used is None:
+            distance_used = gear_stat.get("totalDistance")
+
+        return {
+            "gear_uuid": self._gear_uuid,
+            "total_activities": gear_stat.get("totalActivities"),
+            "date_begin": gear_stat.get("dateBegin"),
+            "date_end": gear_stat.get("dateEnd"),
+            "gear_make_name": gear_stat.get("gearMakeName"),
+            "gear_model_name": gear_stat.get("gearModelName"),
+            "gear_status_name": gear_stat.get("gearStatusName"),
+            "custom_make_model": gear_stat.get("customMakeModel"),
+            "maximum_meters": gear_stat.get("maximumMeters"),
+            "gear_name": gear_stat.get("gearName"),
+            "gear_type": gear_stat.get("gearType"),
+            "gear_type_name": gear_stat.get("gearTypeName"),
+            "gear_brand": gear_stat.get("brand") or gear_stat.get("gearMakeName"),
+            "gear_model": gear_stat.get("model") or gear_stat.get("gearModelName"),
+            "usage_type": gear_stat.get("usageType") or "DISTANCE",
+            "distance_used_meters": distance_used,
+            "duration_used_seconds": duration_seconds,
+            "duration_used_hours": duration_hours,
+            "days_used": gear_stat.get("daysUsed"),
+            "max_usage_duration_seconds": gear_stat.get("maxUsageDurationSeconds"),
+            "first_use_date": gear_stat.get("firstUseDate"),
+            "associated_activity_types": gear_stat.get("associatedActivityTypes", []),
+            "default_for_activity": gear_stat.get("defaultForActivity", []),
+            "default_for_activity_details": gear_stat.get(
+                "defaultForActivityDetails", []
+            ),
+            "last_activity": gear_stat.get("lastActivity"),
+        }
 
 
 class GarminConnectPowerToWeightSensor(CoordinatorEntity[TrainingCoordinator], SensorEntity):
