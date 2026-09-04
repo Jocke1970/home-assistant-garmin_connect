@@ -66,10 +66,15 @@ async def test_fitness_coordinator_does_not_call_garmin_until_configured() -> No
     assert data["ready"] is False
     assert data["load_source"] == "trimp"
     assert data["daily_load"] is None
+    assert data["acwr"] is None
+    assert data["ramp_rate"] is None
     assert data["history_days"] == 90
     assert data["calculation_days"] == 180
     assert data["warmup_days"] == 90
     assert data["warmup_recovered"] is False
+    assert data["acwr_acute_days"] == 7
+    assert data["acwr_chronic_days"] == 28
+    assert data["ramp_period_days"] == 7
 
 
 async def test_fitness_coordinator_uses_warmup_and_exposes_last_90_days() -> None:
@@ -112,12 +117,18 @@ async def test_fitness_coordinator_uses_warmup_and_exposes_last_90_days() -> Non
     assert data["ctl"] == 11.2
     assert data["atl"] == 2.1
     assert data["tsb"] == 9.1
+    assert data["acwr"] == 4.0
+    assert data["ramp_rate"] == -0.2
     assert data["load_source"] == "trimp"
     assert data["algorithm_version"] == 1
     assert data["history_days"] == 90
     assert len(data["history"]) == 90
     assert data["history_start"] == "2026-06-07"
     assert data["history_end"] == "2026-09-04"
+    assert data["history"][0]["acwr"] == 0.0
+    assert data["history"][0]["ramp_rate"] == -0.35
+    assert data["history"][-1]["acwr"] == 4.0
+    assert data["history"][-1]["ramp_rate"] == -0.2
     assert data["calculation_days"] == 180
     assert data["calculation_start"] == "2026-03-09"
     assert data["calculation_end"] == "2026-09-04"
@@ -127,6 +138,9 @@ async def test_fitness_coordinator_uses_warmup_and_exposes_last_90_days() -> Non
     assert data["effective_warmup_days"] == 90
     assert data["warmup_recovered"] is False
     assert data["warmup_blocker_dates"] == []
+    assert data["acwr_acute_days"] == 7
+    assert data["acwr_chronic_days"] == 28
+    assert data["ramp_period_days"] == 7
 
 
 async def test_fitness_coordinator_recovers_from_old_warmup_blocker() -> None:
@@ -183,6 +197,8 @@ async def test_fitness_coordinator_recovers_from_old_warmup_blocker() -> None:
     assert len(data["history"]) == 90
     assert data["history_start"] == "2026-06-07"
     assert data["history_end"] == "2026-09-04"
+    assert data["acwr"] == 4.0
+    assert data["ramp_rate"] == -0.55
     assert data["blocker_dates"] == []
     assert data["warmup_blocker_dates"] == ["2026-03-15"]
     assert data["warmup_recovered"] is True
@@ -223,6 +239,8 @@ async def test_fitness_coordinator_does_not_recover_recent_warmup_blocker() -> N
     assert data["ready"] is False
     assert data["history_complete"] is False
     assert data["history"] == []
+    assert data["acwr"] is None
+    assert data["ramp_rate"] is None
     assert data["blocker_dates"] == ["2026-05-15"]
     assert data["warmup_blocker_dates"] == ["2026-05-15"]
     assert data["warmup_recovered"] is False
@@ -261,6 +279,8 @@ async def test_fitness_coordinator_refuses_short_calculation_series() -> None:
     assert data["history_complete"] is False
     assert data["history"] == []
     assert data["ctl"] is None
+    assert data["acwr"] is None
+    assert data["ramp_rate"] is None
 
 
 def test_fitness_sensor_exposes_value_and_provenance_without_history_attribute() -> None:
@@ -274,6 +294,8 @@ def test_fitness_sensor_exposes_value_and_provenance_without_history_attribute()
         "ctl": 11.045,
         "atl": 1.764,
         "tsb": 9.281,
+        "acwr": 0.82,
+        "ramp_rate": -1.25,
         "history": [{"date": "2026-09-03", "daily_load": 6.708}],
         "history_days": 90,
         "history_start": "2026-06-06",
@@ -289,6 +311,9 @@ def test_fitness_sensor_exposes_value_and_provenance_without_history_attribute()
         "warmup_recovered": True,
         "warmup_blocker_dates": ["2026-03-14"],
         "blocker_dates": [],
+        "acwr_acute_days": 7,
+        "acwr_chronic_days": 28,
+        "ramp_period_days": 7,
         "load_source": "trimp",
         "algorithm_version": 1,
         "max_hr": 175,
@@ -311,7 +336,25 @@ def test_fitness_sensor_exposes_value_and_provenance_without_history_attribute()
     assert sensor.extra_state_attributes["effective_warmup_days"] == 83
     assert sensor.extra_state_attributes["warmup_recovered"] is True
     assert sensor.extra_state_attributes["warmup_blocker_dates"] == ["2026-03-14"]
+    assert sensor.extra_state_attributes["acwr_acute_days"] == 7
+    assert sensor.extra_state_attributes["acwr_chronic_days"] == 28
+    assert sensor.extra_state_attributes["ramp_period_days"] == 7
     assert "history" not in sensor.extra_state_attributes
+
+    acwr_sensor = GarminFitnessSensor(
+        coordinator,
+        next(item for item in FITNESS_SENSOR_DESCRIPTIONS if item.key == "acwr"),
+        "entry_1",
+    )
+    ramp_sensor = GarminFitnessSensor(
+        coordinator,
+        next(item for item in FITNESS_SENSOR_DESCRIPTIONS if item.key == "ramp_rate"),
+        "entry_1",
+    )
+    assert acwr_sensor.native_value == 0.82
+    assert acwr_sensor.native_unit_of_measurement is None
+    assert ramp_sensor.native_value == -1.25
+    assert ramp_sensor.native_unit_of_measurement == "TRIMP"
 
 
 async def test_add_fitness_entities_uses_loaded_garmin_sensor_platform() -> None:
@@ -331,10 +374,12 @@ async def test_add_fitness_entities_uses_loaded_garmin_sensor_platform() -> None
 
     platform.async_add_entities.assert_awaited_once()
     entities = list(platform.async_add_entities.await_args.args[0])
-    assert len(entities) == 4
+    assert len(entities) == 6
     assert {entity.unique_id for entity in entities} == {
         "entry_1_fitness_daily_load",
         "entry_1_fitness_ctl",
         "entry_1_fitness_atl",
         "entry_1_fitness_tsb",
+        "entry_1_fitness_acwr",
+        "entry_1_fitness_ramp_rate",
     }
