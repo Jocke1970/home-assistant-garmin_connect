@@ -144,7 +144,7 @@ class GarminFitnessSensor(CoordinatorEntity[FitnessCoordinator], SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return calculation provenance without recording the 90-day point list."""
+        """Return calculation provenance without recording the point list."""
         data = self.coordinator.data or {}
         return {
             "load_source": data.get("load_source"),
@@ -155,5 +155,9 @@ class GarminFitnessSensor(CoordinatorEntity[FitnessCoordinator], SensorEntity):
             "history_days": data.get("history_days"),
             "history_start": data.get("history_start"),
             "history_end": data.get("history_end"),
+            "calculation_days": data.get("calculation_days"),
+            "calculation_start": data.get("calculation_start"),
+            "calculation_end": data.get("calculation_end"),
+            "warmup_days": data.get("warmup_days"),
             "blocker_dates": data.get("blocker_dates") or [],
         }
