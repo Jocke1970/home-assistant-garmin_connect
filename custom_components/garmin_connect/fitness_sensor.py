@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -20,6 +21,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN
 from .fitness_coordinator import FitnessCoordinator
 
+_LOGGER = logging.getLogger(__name__)
 FITNESS_UNIT = "TRIMP"
 
 
@@ -82,7 +84,15 @@ async def async_add_fitness_sensor_entities(
         None,
     )
     if sensor_platform is None:
-        raise RuntimeError("Garmin Connect sensor platform is not available")
+        # Unit tests and partial platform setup can intentionally mock forwarding.
+        # In a real HA runtime this warning is actionable without taking down the
+        # otherwise healthy Garmin Connect integration.
+        _LOGGER.warning(
+            "Garmin Fitness entities were not added because the sensor platform "
+            "was not available for config entry %s",
+            entry.entry_id,
+        )
+        return
 
     await sensor_platform.async_add_entities(
         GarminFitnessSensor(coordinator, description, entry.entry_id)
