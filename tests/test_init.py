@@ -46,6 +46,12 @@ def _stack_coordinators(stack: ExitStack, coord: MagicMock) -> None:
     """Push patches for all 9 coordinator constructors onto an ExitStack."""
     for target in _COORD_TARGETS:
         stack.enter_context(patch(target, return_value=coord))
+    stack.enter_context(
+        patch(
+            "custom_components.garmin_connect.async_setup_gear_activity_tracker",
+            new=AsyncMock(return_value=MagicMock()),
+        )
+    )
 
 
 # ── Setup tests ───────────────────────────────────────────────────────────────
