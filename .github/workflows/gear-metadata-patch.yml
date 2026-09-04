@@ -1,0 +1,54 @@
+name: One-shot Gear Metadata Patch
+
+on:
+  push:
+    paths:
+      - ".github/workflows/gear-metadata-patch.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Expose activity metadata on Gear sensors
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("custom_components/garmin_connect/sensor.py")
+          text = path.read_text()
+
+          old = '''                    "default_for_activity": gear_stat.get("defaultForActivity", []),
+'''
+          new = '''                    "default_for_activity": gear_stat.get("defaultForActivity", []),
+                    "default_for_activity_details": gear_stat.get(
+                        "defaultForActivityDetails", []
+                    ),
+                    "last_activity": gear_stat.get("lastActivity"),
+'''
+
+          if new in text:
+              print("Gear metadata attributes already present; nothing to do.")
+          elif old in text:
+              path.write_text(text.replace(old, new, 1))
+              print("Patched GarminConnectGearSensor attributes.")
+          else:
+              raise SystemExit("Expected Gear attribute block not found")
+
+      - name: Commit patch
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add custom_components/garmin_connect/sensor.py
+          git commit -m "feat: expose activity metadata on gear sensors"
+          git push
