@@ -1,6 +1,9 @@
 {
   "domain": "garmin_connect",
   "name": "Garmin Connect",
+  "after_dependencies": [
+    "recorder"
+  ],
   "codeowners": [
     "@cyberjunky"
   ],
