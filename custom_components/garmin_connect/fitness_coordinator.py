@@ -32,9 +32,16 @@ from .const import (
     FITNESS_HISTORY_DAYS,
     FITNESS_RAMP_PERIOD_DAYS,
     FITNESS_RECOVERY_MIN_WARMUP_DAYS,
+    FITNESS_STRAIN_HARD_DAY_THRESHOLD,
+    FITNESS_STRAIN_SCALE_MAX,
     FITNESS_WARMUP_DAYS,
 )
 from .fitness_probe import build_fitness_probe
+from .fitness_strain import (
+    async_fetch_strain_calibration,
+    compute_strain_score,
+    default_strain_calibration,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -55,14 +62,21 @@ def _parse_date(value: Any) -> date | None:
         return None
 
 
-def _augment_training_metrics(points: list[Any]) -> list[dict[str, Any]]:
-    """Add ACWR and seven-day CTL ramp to a complete training series.
+def _augment_training_metrics(
+    points: list[Any],
+    *,
+    personal_trimp_max: float,
+) -> list[dict[str, Any]]:
+    """Add ACWR, CTL ramp, and daily strain to a complete training series.
 
-    This mirrors ``ha_garmin.fitness.metrics`` at the temporary Home Assistant
-    adapter boundary. The calculations run on the entire effective warm-up
-    series before the visible 90-day slice is selected, preventing a second
-    left-edge initialization problem for rolling metrics.
+    ACWR/ramp mirror ``ha_garmin.fitness.metrics`` and strain mirrors the
+    Fitness core strain helper at the temporary Home Assistant adapter boundary.
+    Calculations run on the entire effective warm-up series before the visible
+    90-day slice is selected.
     """
+    if personal_trimp_max <= 0:
+        raise ValueError("personal_trimp_max must be positive")
+
     normalized: list[dict[str, Any]] = []
     dates: list[date] = []
     loads: list[float] = []
@@ -93,6 +107,8 @@ def _augment_training_metrics(points: list[Any]) -> list[dict[str, Any]]:
         ctls.append(float(raw_ctl))
 
     for index, point in enumerate(normalized):
+        point["strain"] = compute_strain_score(loads[index], personal_trimp_max)
+
         if index >= FITNESS_ACWR_CHRONIC_DAYS - 1:
             acute_window = loads[index - FITNESS_ACWR_ACUTE_DAYS + 1 : index + 1]
             chronic_window = loads[
@@ -149,11 +165,48 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.sex: FitnessSex | None = (
             cast(FitnessSex, raw_sex) if raw_sex in ("male", "female") else None
         )
+        self._strain_calibration_key: tuple[date, date, float, FitnessSex] | None = None
+        self._strain_calibration: dict[str, Any] | None = None
 
     @property
     def configured(self) -> bool:
         """Return whether both Banister TRIMP profile inputs are configured."""
         return self.user_max_hr is not None and self.sex is not None
+
+    async def _async_get_strain_calibration(
+        self,
+        start_date: date,
+        end_date: date,
+        *,
+        user_max_hr: float,
+        sex: FitnessSex,
+    ) -> dict[str, Any]:
+        """Return cached daily strain calibration for the effective history window."""
+        key = (start_date, end_date, user_max_hr, sex)
+        if self._strain_calibration_key == key and self._strain_calibration is not None:
+            return self._strain_calibration
+
+        try:
+            calibration = await async_fetch_strain_calibration(
+                self.client,
+                start_date,
+                end_date,
+                user_max_hr=user_max_hr,
+                sex=sex,
+            )
+        except GarminAuthError:
+            raise
+        except (GarminConnectError, ClientError, RuntimeError, ValueError) as err:
+            _LOGGER.warning(
+                "Garmin Fitness strain calibration unavailable; using documented "
+                "default personal TRIMP max: %s",
+                err,
+            )
+            calibration = default_strain_calibration(complete=False)
+
+        self._strain_calibration_key = key
+        self._strain_calibration = calibration
+        return calibration
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch canonical TRIMP history with an EMA warm-up period.
@@ -254,18 +307,45 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             last_blocker,
                             recovery_warmup_days,
                         )
+
+            effective_window = effective_probe.get("window") or {}
+            effective_start = _parse_date(effective_window.get("start_date"))
+            strain_calibration = (
+                await self._async_get_strain_calibration(
+                    effective_start,
+                    calculation_end,
+                    user_max_hr=user_max_hr,
+                    sex=sex,
+                )
+                if effective_start is not None
+                else default_strain_calibration(complete=False)
+            )
         except GarminAuthError as err:
             raise ConfigEntryAuthFailed("Authentication failed") from err
         except (GarminConnectError, ClientError, RuntimeError, ValueError) as err:
             raise UpdateFailed(f"Error fetching Garmin Fitness data: {err}") from err
 
-        effective_window = effective_probe.get("window") or {}
         all_points = effective_series.get("points") or []
         if not isinstance(all_points, list):
             all_points = []
 
+        raw_personal_trimp_max = strain_calibration.get("personal_trimp_max")
+        personal_trimp_max = (
+            float(raw_personal_trimp_max)
+            if isinstance(raw_personal_trimp_max, int | float)
+            and not isinstance(raw_personal_trimp_max, bool)
+            else 250.0
+        )
+
         try:
-            enriched_points = _augment_training_metrics(all_points) if all_points else []
+            enriched_points = (
+                _augment_training_metrics(
+                    all_points,
+                    personal_trimp_max=personal_trimp_max,
+                )
+                if all_points
+                else []
+            )
         except ValueError as err:
             raise UpdateFailed(f"Error calculating Garmin Fitness metrics: {err}") from err
 
@@ -299,6 +379,7 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "tsb": latest.get("tsb") if ready else None,
             "acwr": latest.get("acwr") if ready else None,
             "ramp_rate": latest.get("ramp_rate") if ready else None,
+            "strain": latest.get("strain") if ready else None,
             "history": visible_points if ready else [],
             "history_days": FITNESS_HISTORY_DAYS,
             "history_start": history_start if ready else None,
@@ -319,6 +400,24 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "acwr_acute_days": FITNESS_ACWR_ACUTE_DAYS,
             "acwr_chronic_days": FITNESS_ACWR_CHRONIC_DAYS,
             "ramp_period_days": FITNESS_RAMP_PERIOD_DAYS,
+            "strain_scale_max": FITNESS_STRAIN_SCALE_MAX,
+            "hard_day_threshold": FITNESS_STRAIN_HARD_DAY_THRESHOLD,
+            "personal_trimp_max": personal_trimp_max,
+            "personal_trimp_max_source": strain_calibration.get(
+                "personal_trimp_max_source"
+            ),
+            "strain_calibration_sessions": strain_calibration.get(
+                "strain_calibration_sessions"
+            ),
+            "strain_calibration_min_sessions": strain_calibration.get(
+                "strain_calibration_min_sessions"
+            ),
+            "strain_calibration_multiplier": strain_calibration.get(
+                "strain_calibration_multiplier"
+            ),
+            "strain_calibration_complete": strain_calibration.get(
+                "strain_calibration_complete", False
+            ),
             "load_source": FITNESS_LOAD_SOURCE,
             "algorithm_version": probe.get("algorithm_version"),
             "max_hr": user_max_hr,
@@ -327,6 +426,7 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _empty_data(self, *, configured: bool) -> dict[str, Any]:
         """Return a stable data shape before Fitness is configured or available."""
+        strain_calibration = default_strain_calibration(complete=False)
         return {
             "configured": configured,
             "ready": False,
@@ -336,6 +436,7 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "tsb": None,
             "acwr": None,
             "ramp_rate": None,
+            "strain": None,
             "history": [],
             "history_days": FITNESS_HISTORY_DAYS,
             "history_start": None,
@@ -354,6 +455,9 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "acwr_acute_days": FITNESS_ACWR_ACUTE_DAYS,
             "acwr_chronic_days": FITNESS_ACWR_CHRONIC_DAYS,
             "ramp_period_days": FITNESS_RAMP_PERIOD_DAYS,
+            "strain_scale_max": FITNESS_STRAIN_SCALE_MAX,
+            "hard_day_threshold": FITNESS_STRAIN_HARD_DAY_THRESHOLD,
+            **strain_calibration,
             "load_source": FITNESS_LOAD_SOURCE,
             "algorithm_version": 1,
             "max_hr": self.user_max_hr,
