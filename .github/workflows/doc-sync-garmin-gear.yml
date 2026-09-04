@@ -1,0 +1,56 @@
+name: One-shot Garmin Gear Doc Sync
+
+on:
+  push:
+    paths:
+      - ".github/workflows/doc-sync-garmin-gear.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Fitness branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/garmin-fitness
+          fetch-depth: 0
+
+      - name: Sync Gear section in README
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("README.md")
+          text = path.read_text()
+          old = '''### Gear Tracking
+
+Gear sensors are dynamically created for each piece of equipment registered in Garmin Connect (shoes, bikes, etc.). They track total distance in meters and include attributes like `gear_uuid`, `total_activities`, `gear_make_name`, `gear_model_name`, and `default_for_activity`.
+'''
+          new = '''### Gear Tracking
+
+Gear sensors are dynamically created for each piece of equipment registered in Garmin Connect (shoes, bikes, trainers, rowing machines, etc.). In addition to distance/usage statistics they expose enriched activity metadata from `ha-garmin`.
+
+Important attributes include `gear_uuid`, `total_activities`, `gear_make_name`, `gear_model_name`, `gear_status_name`, `maximum_meters`, `default_for_activity`, `default_for_activity_details`, and `last_activity`.
+
+`default_for_activity_details` preserves Garmin's dynamic `typeId`, `typeKey`, and `parentTypeId` hierarchy so consumers do not need a static `type_XX` lookup table. `last_activity` is derived from the normal recent Activity flow and cached by activity ID rather than polling every Gear item separately.
+
+The current startup/reload backfill scans the recent 10-activity window newest-to-oldest. A Gear item can therefore have historical usage totals but no `last_activity` when its latest use is older than the current window.
+
+See [`docs/GARMIN_GEAR.md`](docs/GARMIN_GEAR.md) for the full architecture, cache/retry rules, Activity Type Registry, and frontend contract.
+'''
+          if old not in text:
+              raise SystemExit("Gear Tracking README anchor not found")
+          path.write_text(text.replace(old, new, 1))
+          PY
+
+      - name: Commit documentation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git diff --cached --quiet && exit 0
+          git commit -m "docs: sync Garmin Gear metadata"
+          git push origin HEAD:feature/garmin-fitness
