@@ -200,7 +200,7 @@ class GearActivityTracker:
         """Publish the cache as a lightweight state for Gear/Lovelace consumers."""
         self._hass.states.async_set(
             self.entity_id,
-            len(self._gear_last_activities),
+            str(len(self._gear_last_activities)),
             {
                 "friendly_name": "Garmin Connect Gear Last Activity",
                 "icon": "mdi:history",
