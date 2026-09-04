@@ -125,7 +125,7 @@ async def test_fitness_coordinator_uses_warmup_and_exposes_last_90_days() -> Non
     assert len(data["history"]) == 90
     assert data["history_start"] == "2026-06-07"
     assert data["history_end"] == "2026-09-04"
-    assert data["history"][0]["acwr"] == 0.0
+    assert data["history"][0]["acwr"] is None
     assert data["history"][0]["ramp_rate"] == -0.35
     assert data["history"][-1]["acwr"] == 4.0
     assert data["history"][-1]["ramp_rate"] == -0.2
