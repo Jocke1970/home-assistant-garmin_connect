@@ -1,0 +1,27 @@
+name: Release Garmin Fitness probe 15
+
+on:
+  push:
+    branches:
+      - feature/garmin-fitness
+    paths:
+      - .github/workflows/release-probe15.yml
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: 3.0.22-fitness-probe.15
+          TARGET: e1bf623707179aae7d7b9dbd32007642a50f1d99
+        run: |
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$TARGET" \
+            --title "Garmin Fitness + Gear probe 15 – Load Focus" \
+            --notes "Adds Garmin Fitness Load Focus v1 as three Training Effect-derived sensors: low aerobic, high aerobic and anaerobic, with 90-day Long-Term Statistics backfill. The implementation is a transparent approximation rather than Garmin's proprietary Load Focus algorithm: Aerobic Training Effect below 3.0 contributes to low aerobic, Aerobic Training Effect at or above 3.0 contributes to high aerobic, and Anaerobic Training Effect contributes independently. Missing Training Effect data is preserved as incomplete instead of being fabricated as zero, and Load Focus completeness is kept separate from the canonical TRIMP readiness used by CTL/ATL/TSB. Preserves Strain, ACWR, Ramp, warm-up recovery, Gear v2 usage, recent Gear activity support and device battery diagnostics."
