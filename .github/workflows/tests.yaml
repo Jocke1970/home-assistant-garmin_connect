@@ -6,6 +6,7 @@ on:
       - main
       - ng
       - feature/garmin-fitness
+      - feature/garmin-fitness-handoff
   pull_request:
     branches:
       - main
