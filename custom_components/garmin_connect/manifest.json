@@ -19,5 +19,5 @@
   "requirements": [
     "ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@c88e9c962edfb8b8ca71652297898c11dc44a639"
   ],
-  "version": "3.0.21-fitness-probe.14"
+  "version": "3.0.22-fitness-probe.15"
 }
