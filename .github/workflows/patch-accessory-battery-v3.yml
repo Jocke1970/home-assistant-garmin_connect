@@ -48,6 +48,8 @@ jobs:
 
       - name: Format and validate
         run: |
+          ruff check --fix custom_components/garmin_connect/sensor.py tests/test_sensor.py
+          ruff format custom_components/garmin_connect/sensor.py tests/test_sensor.py
           pre-commit run --all-files --hook-stage manual --config .github/pre-commit-config.yaml
           pytest tests/test_sensor.py -q
 
