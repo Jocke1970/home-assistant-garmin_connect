@@ -1,6 +1,6 @@
 """Tests for the permanent Garmin Fitness runtime layer."""
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -201,7 +201,7 @@ async def test_fitness_coordinator_uses_hagarm_engine_and_exposes_last_90_days()
     with (
         patch(
             "custom_components.garmin_connect.fitness_coordinator.dt_util.now",
-            return_value=datetime(2026, 9, 4, 12, tzinfo=timezone.utc),
+            return_value=datetime(2026, 9, 4, 12, tzinfo=UTC),
         ),
         patch.object(
             coordinator,
@@ -273,7 +273,7 @@ async def test_fitness_coordinator_recovers_from_old_warmup_blocker() -> None:
     with (
         patch(
             "custom_components.garmin_connect.fitness_coordinator.dt_util.now",
-            return_value=datetime(2026, 9, 4, 12, tzinfo=timezone.utc),
+            return_value=datetime(2026, 9, 4, 12, tzinfo=UTC),
         ),
         patch.object(
             coordinator,
@@ -313,7 +313,7 @@ async def test_fitness_coordinator_does_not_recover_recent_warmup_blocker() -> N
     with (
         patch(
             "custom_components.garmin_connect.fitness_coordinator.dt_util.now",
-            return_value=datetime(2026, 9, 4, 12, tzinfo=timezone.utc),
+            return_value=datetime(2026, 9, 4, 12, tzinfo=UTC),
         ),
         patch.object(
             coordinator,
@@ -345,7 +345,7 @@ async def test_fitness_coordinator_refuses_short_calculation_series() -> None:
     with (
         patch(
             "custom_components.garmin_connect.fitness_coordinator.dt_util.now",
-            return_value=datetime(2026, 9, 4, 12, tzinfo=timezone.utc),
+            return_value=datetime(2026, 9, 4, 12, tzinfo=UTC),
         ),
         patch.object(
             coordinator,
