@@ -11,6 +11,8 @@ from typing import Any
 
 from ha_garmin.fitness import (
     build_load_focus_day as _build_load_focus_day,
+)
+from ha_garmin.fitness import (
     compute_load_focus_contribution as _compute_load_focus_contribution,
 )
 
