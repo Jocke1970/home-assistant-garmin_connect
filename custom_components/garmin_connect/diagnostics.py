@@ -25,6 +25,15 @@ TO_REDACT = {
     "profileId",
 }
 
+DEVICE_PROBE_REDACT = {
+    "deviceId",
+    "unitId",
+    "serialNumber",
+    "applicationKey",
+    "userDeviceId",
+    "registrationId",
+}
+
 
 def _gear_probe_data(data: dict[str, Any]) -> dict[str, Any]:
     """Return raw Gear payloads for diagnostics, with account identifiers redacted.
@@ -44,6 +53,31 @@ def _gear_probe_data(data: dict[str, Any]) -> dict[str, Any]:
         },
         TO_REDACT,
     )
+
+
+async def _device_battery_probe(client: Any) -> dict[str, Any]:
+    """Fetch raw authenticated device/sensor payloads only when diagnostics are requested.
+
+    These endpoints are intentionally not added to normal polling yet. The probe
+    lets us inspect Garmin's current battery schema for registered devices and
+    paired ANT+/BLE sensors without polluting Recorder or guessing field names.
+    """
+
+    async def _call(name: str, method: Any) -> tuple[str, Any]:
+        try:
+            return name, await method()
+        except Exception as err:  # Diagnostics must remain available if one probe fails.
+            return name, {"error": type(err).__name__, "message": str(err)}
+
+    results = dict(
+        [
+            await _call("devices", client.get_devices),
+            await _call("sensors", client.get_sensors),
+            await _call("last_used", client.get_device_last_used),
+        ]
+    )
+
+    return async_redact_data(results, DEVICE_PROBE_REDACT)
 
 
 async def async_get_config_entry_diagnostics(
@@ -67,9 +101,11 @@ async def async_get_config_entry_diagnostics(
         }
 
     gear_data = coordinators.gear.data or {}
+    device_battery_probe = await _device_battery_probe(coordinators.gear.client)
 
     return {
         "entry_data": async_redact_data(dict(entry.data), TO_REDACT),
         "coordinators": coordinator_info,
         "gear_probe": _gear_probe_data(gear_data),
+        "device_battery_probe": device_battery_probe,
     }
