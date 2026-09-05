@@ -1,0 +1,28 @@
+name: Release Garmin Fitness probe 14
+
+on:
+  push:
+    branches:
+      - feature/garmin-fitness
+    paths:
+      - .github/workflows/release-probe14.yml
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.event.head_commit.message == 'chore: release Garmin Fitness probe 14'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: 3.0.21-fitness-probe.14
+          TARGET: 8086507af2c80de393a29d5732b4e51717cc86af
+        run: |
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$TARGET" \
+            --title "Garmin Fitness + Gear probe 14 – Device battery diagnostics" \
+            --notes "Adds an authenticated diagnostics-only device battery probe for Garmin registered devices, paired ANT+/BLE sensors and the last-used device. The probe runs only when Home Assistant diagnostics are requested, keeps normal polling unchanged, and redacts device identifiers while retaining battery-related fields for schema discovery. Preserves Garmin Fitness, Strain, ACWR, Ramp, CTL/ATL/TSB, Gear v2 usage and recent Gear activity support."
