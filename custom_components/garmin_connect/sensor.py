@@ -1947,6 +1947,9 @@ class GarminConnectGearSensor(CoordinatorEntity[GearCoordinator], SensorEntity):
                 return {
                     "gear_uuid": self._gear_uuid,
                     "total_activities": gear_stat.get("totalActivities"),
+                    "usage_type": gear_stat.get("usageType"),
+                    "duration_used_seconds": gear_stat.get("durationUsedSeconds"),
+                    "days_used": gear_stat.get("daysUsed"),
                     "date_begin": gear_stat.get("dateBegin"),
                     "date_end": gear_stat.get("dateEnd"),
                     "gear_make_name": gear_stat.get("gearMakeName"),
