@@ -1,0 +1,42 @@
+name: Release Garmin Gear M1
+
+on:
+  push:
+    branches: [feature/garmin-gear]
+    paths:
+      - .github/workflows/release-garmin-gear-m1.yml
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: feature/garmin-gear
+
+      - name: Create tested M1 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="3.0.23-gear-m1.1"
+          target="d85b3904e5b8ca8b1b0ad74a0e0c8d22a40a88a6"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "$tag already exists"
+          else
+            gh release create "$tag" \
+              --target "$target" \
+              --title "Garmin Gear M1 – Native Gear engine" \
+              --notes "First M1 runtime build after the approved Gear M0 audit. Adds a native Garmin Gear service device and canonical overview entity backed by normalized ha-garmin Gear source records. The data model separates last_used_at from last_seen_at, keeps activity_count nullable, has no generic top-level device_id, supports multiple source records per GearItem, and enforces lowercase snake_case categories. Garmin Gear, registered Garmin devices and recent ANT+/BLE sensors keep separate stable source identities; no display-name based cross-source merging is performed. Garmin Fitness algorithms and existing Fitness entity IDs are unchanged. No Lovelace/UI feature work is included."
+
+      - name: Remove one-shot workflow
+        run: |
+          rm .github/workflows/release-garmin-gear-m1.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/release-garmin-gear-m1.yml
+          git commit -m "chore: remove Garmin Gear M1 release workflow"
+          git push origin HEAD:feature/garmin-gear
