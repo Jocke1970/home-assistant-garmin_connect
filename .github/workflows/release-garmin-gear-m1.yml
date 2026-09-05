@@ -31,6 +31,7 @@ jobs:
               --target "$target" \
               --title "Garmin Gear M1 – Native Gear engine" \
               --notes "First M1 runtime build after the approved Gear M0 audit. Adds a native Garmin Gear service device and canonical overview entity backed by normalized ha-garmin Gear source records. The data model separates last_used_at from last_seen_at, keeps activity_count nullable, has no generic top-level device_id, supports multiple source records per GearItem, and enforces lowercase snake_case categories. Garmin Gear, registered Garmin devices and recent ANT+/BLE sensors keep separate stable source identities; no display-name based cross-source merging is performed. Garmin Fitness algorithms and existing Fitness entity IDs are unchanged. No Lovelace/UI feature work is included."
+          fi
 
       - name: Remove one-shot workflow
         run: |
