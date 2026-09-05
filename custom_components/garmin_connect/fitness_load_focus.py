@@ -4,7 +4,8 @@ This is a transparent approximation of training mix, not Garmin's proprietary
 Load Focus algorithm. Garmin Aerobic Training Effect contributes to either the
 low- or high-aerobic bucket, while Anaerobic Training Effect contributes to the
 anaerobic bucket independently. No TRIMP or Garmin training-load weighting is
-used.
+used. The aerobic split threshold is part of this integration's versioned v1
+heuristic and is exposed as provenance rather than presented as a Garmin rule.
 """
 
 from __future__ import annotations
@@ -49,9 +50,7 @@ def compute_load_focus_contribution(
     if aerobic is None or anaerobic is None:
         return None
 
-    low_aerobic = (
-        aerobic if 0 < aerobic < high_aerobic_threshold else 0.0
-    )
+    low_aerobic = aerobic if 0 < aerobic < high_aerobic_threshold else 0.0
     high_aerobic = aerobic if aerobic >= high_aerobic_threshold else 0.0
     return {
         "low_aerobic": round(low_aerobic, 3),
