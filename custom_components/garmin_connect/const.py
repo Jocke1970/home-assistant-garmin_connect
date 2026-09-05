@@ -33,6 +33,11 @@ FITNESS_STRAIN_SCALE_MAX: Final = 21.0
 FITNESS_STRAIN_HARD_DAY_THRESHOLD: Final = 14.0
 FITNESS_STRAIN_CALIBRATION_MIN_SESSIONS: Final = 30
 FITNESS_STRAIN_CALIBRATION_MULTIPLIER: Final = 1.2
+FITNESS_LOAD_FOCUS_ALGORITHM_VERSION: Final = 1
+FITNESS_LOAD_FOCUS_SOURCE: Final = "garmin_training_effect"
+# Transparent v1 heuristic: Garmin Aerobic Training Effect >= 3.0 contributes
+# to high aerobic; positive values below 3.0 contribute to low aerobic.
+FITNESS_LOAD_FOCUS_HIGH_AEROBIC_THRESHOLD: Final = 3.0
 FITNESS_MAX_HR_MIN: Final = 100
 FITNESS_MAX_HR_MAX: Final = 250
 FITNESS_SEX_OPTIONS: Final = ("male", "female")
