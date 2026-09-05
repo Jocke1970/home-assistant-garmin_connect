@@ -1,10 +1,9 @@
 """Garmin Fitness coordinator.
 
-This is the Home Assistant-facing runtime for the canonical Fitness series. It
-reuses the integration's existing authenticated GarminClient. Until the Fitness
-engine is available from a released ha-garmin package, this coordinator consumes
-the validated read-only probe output; the replacement boundary is deliberately
-kept inside this module.
+This Home Assistant-facing runtime orchestrates the canonical Fitness series
+using the shared authenticated GarminClient. Garmin API history normalization and
+all Fitness calculations live in ha-garmin; this module owns only orchestration,
+Home Assistant state shape, warm-up recovery and presentation provenance.
 """
 
 from __future__ import annotations
@@ -14,8 +13,19 @@ from datetime import date, timedelta
 from typing import Any, Literal, cast
 
 from aiohttp import ClientError
-from ha_garmin import GarminClient
+from ha_garmin import GarminClient, GarminHistoryClient
 from ha_garmin.exceptions import GarminAuthError, GarminConnectError
+from ha_garmin.fitness import (
+    build_daily_load_focus_series,
+    calibrate_personal_trimp_max,
+    compute_strain_score,
+    compute_trimp,
+)
+from ha_garmin.fitness.const import (
+    DEFAULT_PERSONAL_TRIMP_MAX,
+    GARMIN_FITNESS_ALGORITHM_VERSION,
+)
+from ha_garmin.history import TrimpTrainingContext
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
@@ -35,15 +45,11 @@ from .const import (
     FITNESS_LOAD_FOCUS_SOURCE,
     FITNESS_RAMP_PERIOD_DAYS,
     FITNESS_RECOVERY_MIN_WARMUP_DAYS,
+    FITNESS_STRAIN_CALIBRATION_MIN_SESSIONS,
+    FITNESS_STRAIN_CALIBRATION_MULTIPLIER,
     FITNESS_STRAIN_HARD_DAY_THRESHOLD,
     FITNESS_STRAIN_SCALE_MAX,
     FITNESS_WARMUP_DAYS,
-)
-from .fitness_probe import build_fitness_probe
-from .fitness_strain import (
-    async_fetch_strain_calibration,
-    compute_strain_score,
-    default_strain_calibration,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -53,136 +59,107 @@ FITNESS_LOAD_SOURCE = "trimp"
 FitnessSex = Literal["male", "female"]
 
 
-def _parse_date(value: Any) -> date | None:
-    """Return an ISO calendar date, otherwise None."""
-    if isinstance(value, date):
-        return value
-    if not isinstance(value, str):
-        return None
-    try:
-        return date.fromisoformat(value[:10])
-    except ValueError:
-        return None
+def _strain_calibration(
+    context: TrimpTrainingContext,
+    *,
+    user_max_hr: float,
+    sex: FitnessSex,
+) -> dict[str, Any]:
+    """Build strain calibration metadata using only ha-garmin Fitness math."""
+    session_trimps: list[float] = []
+    for activity in context.activities:
+        resting_hr = context.resting_hr_by_date.get(activity.calendar_date)
+        if resting_hr is None:
+            continue
+        value = compute_trimp(activity, resting_hr, user_max_hr, sex)
+        if value is not None and value > 0:
+            session_trimps.append(value)
+
+    calibrated = calibrate_personal_trimp_max(
+        session_trimps,
+        min_sessions=FITNESS_STRAIN_CALIBRATION_MIN_SESSIONS,
+        multiplier=FITNESS_STRAIN_CALIBRATION_MULTIPLIER,
+    )
+    personal_trimp_max = (
+        calibrated if calibrated is not None else DEFAULT_PERSONAL_TRIMP_MAX
+    )
+    return {
+        "personal_trimp_max": personal_trimp_max,
+        "personal_trimp_max_source": (
+            "calibrated" if calibrated is not None else "default"
+        ),
+        "strain_calibration_sessions": len(session_trimps),
+        "strain_calibration_min_sessions": FITNESS_STRAIN_CALIBRATION_MIN_SESSIONS,
+        "strain_calibration_multiplier": FITNESS_STRAIN_CALIBRATION_MULTIPLIER,
+        "strain_calibration_complete": True,
+    }
 
 
-def _augment_training_metrics(
-    points: list[Any],
+def _history_points(
+    context: TrimpTrainingContext,
     *,
     personal_trimp_max: float,
+    start_date: date,
+    end_date: date,
 ) -> list[dict[str, Any]]:
-    """Add ACWR, CTL ramp, and daily strain to a complete training series.
+    """Serialize ha-garmin Fitness result objects into the HA history shape."""
+    history = context.history
+    if not history.assessment.ready:
+        return []
 
-    ACWR/ramp mirror ``ha_garmin.fitness.metrics`` and strain mirrors the
-    Fitness core strain helper at the temporary Home Assistant adapter boundary.
-    Calculations run on the entire effective warm-up series before the visible
-    90-day slice is selected.
-    """
-    if personal_trimp_max <= 0:
-        raise ValueError("personal_trimp_max must be positive")
-
-    normalized: list[dict[str, Any]] = []
-    dates: list[date] = []
-    loads: list[float] = []
-    ctls: list[float] = []
-
-    for raw_point in points:
-        if not isinstance(raw_point, dict):
-            raise ValueError("Fitness training point must be a mapping")
-
-        point_date = _parse_date(raw_point.get("date"))
-        raw_load = raw_point.get("daily_load")
-        raw_ctl = raw_point.get("ctl")
-        if point_date is None:
-            raise ValueError("Fitness training point is missing a valid date")
-        if (
-            isinstance(raw_load, bool)
-            or not isinstance(raw_load, int | float)
-            or isinstance(raw_ctl, bool)
-            or not isinstance(raw_ctl, int | float)
-        ):
-            raise ValueError("Fitness training point is missing daily_load or ctl")
-        if dates and point_date != dates[-1] + timedelta(days=1):
-            raise ValueError("Fitness training series must contain consecutive dates")
-
-        normalized.append(dict(raw_point))
-        dates.append(point_date)
-        loads.append(float(raw_load))
-        ctls.append(float(raw_ctl))
-
-    for index, point in enumerate(normalized):
-        point["strain"] = compute_strain_score(loads[index], personal_trimp_max)
-
-        if index >= FITNESS_ACWR_CHRONIC_DAYS - 1:
-            acute_window = loads[index - FITNESS_ACWR_ACUTE_DAYS + 1 : index + 1]
-            chronic_window = loads[
-                index - FITNESS_ACWR_CHRONIC_DAYS + 1 : index + 1
-            ]
-            acute_average = sum(acute_window) / FITNESS_ACWR_ACUTE_DAYS
-            chronic_average = sum(chronic_window) / FITNESS_ACWR_CHRONIC_DAYS
-            point["acute_average"] = round(acute_average, 3)
-            point["chronic_average"] = round(chronic_average, 3)
-            point["acwr"] = (
-                round(acute_average / chronic_average, 3)
-                if chronic_average > 0
-                else None
-            )
-        else:
-            point["acute_average"] = None
-            point["chronic_average"] = None
-            point["acwr"] = None
-
-        if index >= FITNESS_RAMP_PERIOD_DAYS:
-            point["ramp_rate"] = round(
-                ctls[index] - ctls[index - FITNESS_RAMP_PERIOD_DAYS],
-                3,
-            )
-        else:
-            point["ramp_rate"] = None
-
-    return normalized
-
-
-def _merge_load_focus_metrics(
-    points: list[dict[str, Any]],
-    load_focus: Any,
-) -> list[dict[str, Any]]:
-    """Merge date-aligned daily Training Effect mix into canonical history."""
-    raw_points = load_focus.get("points") if isinstance(load_focus, dict) else None
-    focus_by_date: dict[str, dict[str, Any]] = {}
-    if isinstance(raw_points, list):
-        for raw in raw_points:
-            if not isinstance(raw, dict):
-                continue
-            raw_date = raw.get("date")
-            if isinstance(raw_date, str):
-                focus_by_date[raw_date] = raw
-
-    merged: list[dict[str, Any]] = []
-    for point in points:
-        item = dict(point)
-        point_date = item.get("date")
-        focus = focus_by_date.get(point_date) if isinstance(point_date, str) else None
-        complete = bool(focus and focus.get("complete") is True)
-        item["load_focus_complete"] = complete
-        item["load_focus_activity_count"] = (
-            int(focus.get("activity_count") or 0) if focus else 0
+    acwr_by_date = {point.date: point for point in history.acwr_points}
+    ramp_by_date = {point.date: point for point in history.ramp_rate_points}
+    focus_by_date = {
+        point.date: point
+        for point in build_daily_load_focus_series(
+            context.activities,
+            start_date,
+            end_date,
+            high_aerobic_threshold=FITNESS_LOAD_FOCUS_HIGH_AEROBIC_THRESHOLD,
         )
-        item["load_focus_covered_activities"] = (
-            int(focus.get("covered_activities") or 0) if focus else 0
+    }
+
+    result: list[dict[str, Any]] = []
+    for point in history.training_points:
+        acwr = acwr_by_date.get(point.date)
+        ramp = ramp_by_date.get(point.date)
+        focus = focus_by_date.get(point.date)
+        result.append(
+            {
+                "date": point.date.isoformat(),
+                "daily_load": point.daily_load,
+                "ctl": point.ctl,
+                "atl": point.atl,
+                "tsb": point.tsb,
+                "acute_average": acwr.acute_average if acwr is not None else None,
+                "chronic_average": (
+                    acwr.chronic_average if acwr is not None else None
+                ),
+                "acwr": acwr.acwr if acwr is not None else None,
+                "ramp_rate": ramp.ramp_rate if ramp is not None else None,
+                "strain": compute_strain_score(
+                    point.daily_load,
+                    personal_trimp_max,
+                ),
+                "load_focus_complete": bool(focus and focus.complete),
+                "load_focus_activity_count": (
+                    focus.activity_count if focus is not None else 0
+                ),
+                "load_focus_covered_activities": (
+                    focus.covered_activities if focus is not None else 0
+                ),
+                "load_focus_low_aerobic": (
+                    focus.low_aerobic if focus is not None else None
+                ),
+                "load_focus_high_aerobic": (
+                    focus.high_aerobic if focus is not None else None
+                ),
+                "load_focus_anaerobic": (
+                    focus.anaerobic if focus is not None else None
+                ),
+            }
         )
-        for target, source in (
-            ("load_focus_low_aerobic", "low_aerobic"),
-            ("load_focus_high_aerobic", "high_aerobic"),
-            ("load_focus_anaerobic", "anaerobic"),
-        ):
-            value = focus.get(source) if focus else None
-            item[target] = (
-                float(value)
-                if not isinstance(value, bool) and isinstance(value, int | float)
-                else None
-            )
-        merged.append(item)
-    return merged
+    return result
 
 
 class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -203,6 +180,7 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             update_interval=FITNESS_UPDATE_INTERVAL,
         )
         self.client = client
+        self.history_client = GarminHistoryClient(client)
         raw_max_hr = entry.options.get(CONF_FITNESS_MAX_HR)
         raw_sex = entry.options.get(CONF_FITNESS_SEX)
         self.user_max_hr: float | None = (
@@ -211,63 +189,30 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.sex: FitnessSex | None = (
             cast(FitnessSex, raw_sex) if raw_sex in ("male", "female") else None
         )
-        self._strain_calibration_key: tuple[date, date, float, FitnessSex] | None = None
-        self._strain_calibration: dict[str, Any] | None = None
 
     @property
     def configured(self) -> bool:
         """Return whether both Banister TRIMP profile inputs are configured."""
         return self.user_max_hr is not None and self.sex is not None
 
-    async def _async_get_strain_calibration(
+    async def _fetch_context(
         self,
         start_date: date,
         end_date: date,
         *,
         user_max_hr: float,
         sex: FitnessSex,
-    ) -> dict[str, Any]:
-        """Return cached daily strain calibration for the effective history window."""
-        key = (start_date, end_date, user_max_hr, sex)
-        if self._strain_calibration_key == key and self._strain_calibration is not None:
-            return self._strain_calibration
-
-        try:
-            calibration = await async_fetch_strain_calibration(
-                self.client,
-                start_date,
-                end_date,
-                user_max_hr=user_max_hr,
-                sex=sex,
-            )
-        except GarminAuthError:
-            raise
-        except (GarminConnectError, ClientError, RuntimeError, ValueError) as err:
-            _LOGGER.warning(
-                "Garmin Fitness strain calibration unavailable; using documented "
-                "default personal TRIMP max: %s",
-                err,
-            )
-            calibration = default_strain_calibration(complete=False)
-
-        self._strain_calibration_key = key
-        self._strain_calibration = calibration
-        return calibration
+    ) -> TrimpTrainingContext:
+        """Fetch one strict Fitness context through the ha-garmin boundary."""
+        return await self.history_client.fetch_trimp_training_context(
+            start_date,
+            end_date,
+            user_max_hr=user_max_hr,
+            sex=sex,
+        )
 
     async def _async_update_data(self) -> dict[str, Any]:
-        """Fetch canonical TRIMP history with an EMA warm-up period.
-
-        CTL and ATL are exponential moving averages. Initializing them at the
-        left edge of the displayed 90-day window makes historical values drift
-        as that window advances. We therefore calculate over 180 days and expose
-        only the final 90 days to Home Assistant and Recorder.
-
-        A missing TRIMP activity inside the visible 90-day window always blocks
-        the series. A blocker that is only in the older warm-up section may be
-        recovered by restarting the strict probe on the following day, but only
-        when enough complete warm-up days remain for the EMA seed to decay.
-        Missing load is never converted to zero.
-        """
+        """Fetch canonical TRIMP history with a stable EMA warm-up period."""
         if not self.configured:
             return self._empty_data(configured=False)
 
@@ -276,74 +221,50 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         assert user_max_hr is not None
         assert sex is not None
 
-        requested_end = dt_util.now().date()
+        calculation_end = dt_util.now().date()
+        calculation_start = calculation_end - timedelta(
+            days=FITNESS_CALCULATION_DAYS - 1
+        )
+        visible_start = calculation_end - timedelta(days=FITNESS_HISTORY_DAYS - 1)
 
         try:
-            # Temporary adapter boundary: once a distributable ha-garmin Fitness
-            # release exists, replace this call with
-            # GarminHistoryClient(self.client).fetch_trimp_training_history(...).
-            probe = await build_fitness_probe(
-                self.client,
-                days=FITNESS_CALCULATION_DAYS,
-                end_date=requested_end,
+            context = await self._fetch_context(
+                calculation_start,
+                calculation_end,
                 user_max_hr=user_max_hr,
                 sex=sex,
             )
 
-            calculation_window = probe.get("window") or {}
-            calculation_end = (
-                _parse_date(calculation_window.get("end_date")) or requested_end
-            )
-            visible_start = calculation_end - timedelta(
-                days=FITNESS_HISTORY_DAYS - 1
-            )
-
-            training_series = probe.get("training_series") or {}
-            trimp_series = training_series.get("trimp") or {}
-            raw_blockers = trimp_series.get("blocker_dates") or []
-            blockers = [str(value) for value in raw_blockers]
-            parsed_blockers = [_parse_date(value) for value in raw_blockers]
-
-            effective_probe = probe
-            effective_series = trimp_series
-            remaining_blockers = blockers
-            warmup_blocker_dates: list[str] = []
+            blockers = list(context.history.assessment.incomplete_days)
+            remaining_blockers = [value.isoformat() for value in blockers]
+            warmup_blocker_dates = [
+                value.isoformat() for value in blockers if value < visible_start
+            ]
             warmup_recovered = False
+            effective_start = calculation_start
             effective_warmup_days = FITNESS_WARMUP_DAYS
+            effective_context = context
 
-            if blockers and all(value is not None for value in parsed_blockers):
-                blocker_dates = cast(list[date], parsed_blockers)
-                warmup_blocker_dates = [
-                    blocker.isoformat()
-                    for blocker in blocker_dates
-                    if blocker < visible_start
-                ]
-                last_blocker = max(blocker_dates)
+            if blockers:
+                last_blocker = max(blockers)
                 recovery_start = last_blocker + timedelta(days=1)
                 recovery_warmup_days = (visible_start - recovery_start).days
                 recovery_days = (calculation_end - recovery_start).days + 1
-
                 can_recover = (
                     last_blocker < visible_start
                     and recovery_warmup_days >= FITNESS_RECOVERY_MIN_WARMUP_DAYS
                     and recovery_days >= FITNESS_HISTORY_DAYS
                 )
                 if can_recover:
-                    recovery_probe = await build_fitness_probe(
-                        self.client,
-                        days=recovery_days,
-                        end_date=calculation_end,
+                    recovery_context = await self._fetch_context(
+                        recovery_start,
+                        calculation_end,
                         user_max_hr=user_max_hr,
                         sex=sex,
                     )
-                    recovery_training_series = (
-                        recovery_probe.get("training_series") or {}
-                    )
-                    recovery_series = recovery_training_series.get("trimp") or {}
-                    recovery_blockers = recovery_series.get("blocker_dates") or []
-                    if bool(recovery_series.get("ready")) and not recovery_blockers:
-                        effective_probe = recovery_probe
-                        effective_series = recovery_series
+                    if recovery_context.history.assessment.ready:
+                        effective_context = recovery_context
+                        effective_start = recovery_start
                         remaining_blockers = []
                         warmup_recovered = True
                         effective_warmup_days = recovery_warmup_days
@@ -354,75 +275,46 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             recovery_warmup_days,
                         )
 
-            effective_window = effective_probe.get("window") or {}
-            effective_start = _parse_date(effective_window.get("start_date"))
-            strain_calibration = (
-                await self._async_get_strain_calibration(
-                    effective_start,
-                    calculation_end,
-                    user_max_hr=user_max_hr,
-                    sex=sex,
-                )
-                if effective_start is not None
-                else default_strain_calibration(complete=False)
+            strain_calibration = _strain_calibration(
+                effective_context,
+                user_max_hr=user_max_hr,
+                sex=sex,
             )
         except GarminAuthError as err:
             raise ConfigEntryAuthFailed("Authentication failed") from err
         except (GarminConnectError, ClientError, RuntimeError, ValueError) as err:
             raise UpdateFailed(f"Error fetching Garmin Fitness data: {err}") from err
 
-        all_points = effective_series.get("points") or []
-        if not isinstance(all_points, list):
-            all_points = []
-
-        raw_personal_trimp_max = strain_calibration.get("personal_trimp_max")
-        personal_trimp_max = (
-            float(raw_personal_trimp_max)
-            if isinstance(raw_personal_trimp_max, int | float)
-            and not isinstance(raw_personal_trimp_max, bool)
-            else 250.0
-        )
-
+        personal_trimp_max = float(strain_calibration["personal_trimp_max"])
         try:
-            enriched_points = (
-                _augment_training_metrics(
-                    all_points,
-                    personal_trimp_max=personal_trimp_max,
-                )
-                if all_points
-                else []
-            )
-            enriched_points = _merge_load_focus_metrics(
-                enriched_points,
-                effective_probe.get("load_focus"),
+            all_points = _history_points(
+                effective_context,
+                personal_trimp_max=personal_trimp_max,
+                start_date=effective_start,
+                end_date=calculation_end,
             )
         except ValueError as err:
             raise UpdateFailed(f"Error calculating Garmin Fitness metrics: {err}") from err
 
-        visible_points = enriched_points[-FITNESS_HISTORY_DAYS:]
+        visible_points = all_points[-FITNESS_HISTORY_DAYS:]
         visible_history_complete = len(visible_points) == FITNESS_HISTORY_DAYS
         latest = visible_points[-1] if visible_points else {}
+
         load_focus_total_activities = sum(
             int(point.get("load_focus_activity_count") or 0)
             for point in visible_points
-            if isinstance(point, dict)
         )
         load_focus_covered_activities = sum(
             int(point.get("load_focus_covered_activities") or 0)
             for point in visible_points
-            if isinstance(point, dict)
         )
         load_focus_history_complete = bool(visible_points) and all(
-            point.get("load_focus_complete") is True
-            for point in visible_points
-            if isinstance(point, dict)
+            point.get("load_focus_complete") is True for point in visible_points
         )
         load_focus_incomplete_dates = [
-            str(point.get("date"))
+            str(point["date"])
             for point in visible_points
-            if isinstance(point, dict)
-            and point.get("load_focus_complete") is not True
-            and isinstance(point.get("date"), str)
+            if point.get("load_focus_complete") is not True
         ]
         load_focus_coverage_percent = (
             round(
@@ -434,23 +326,16 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if load_focus_total_activities
             else 100.0
         )
+
         ready = (
-            bool(effective_series.get("ready"))
+            effective_context.history.assessment.ready
             and visible_history_complete
             and bool(latest)
             and not remaining_blockers
         )
-
-        history_start = (
-            visible_points[0].get("date")
-            if visible_points and isinstance(visible_points[0], dict)
-            else None
-        )
-        history_end = (
-            visible_points[-1].get("date")
-            if visible_points and isinstance(visible_points[-1], dict)
-            else None
-        )
+        effective_calculation_days = (
+            calculation_end - effective_start
+        ).days + 1
 
         return {
             "configured": True,
@@ -473,17 +358,15 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ),
             "history": visible_points if ready else [],
             "history_days": FITNESS_HISTORY_DAYS,
-            "history_start": history_start if ready else None,
-            "history_end": history_end if ready else None,
+            "history_start": visible_points[0]["date"] if ready else None,
+            "history_end": visible_points[-1]["date"] if ready else None,
             "history_complete": ready,
-            "calculation_days": calculation_window.get(
-                "days", FITNESS_CALCULATION_DAYS
-            ),
-            "calculation_start": calculation_window.get("start_date"),
-            "calculation_end": calculation_window.get("end_date"),
+            "calculation_days": FITNESS_CALCULATION_DAYS,
+            "calculation_start": calculation_start.isoformat(),
+            "calculation_end": calculation_end.isoformat(),
             "warmup_days": FITNESS_WARMUP_DAYS,
-            "effective_calculation_days": effective_window.get("days"),
-            "effective_calculation_start": effective_window.get("start_date"),
+            "effective_calculation_days": effective_calculation_days,
+            "effective_calculation_start": effective_start.isoformat(),
             "effective_warmup_days": effective_warmup_days,
             "warmup_recovered": warmup_recovered,
             "warmup_blocker_dates": warmup_blocker_dates,
@@ -513,31 +396,15 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "load_focus_incomplete_dates": (
                 load_focus_incomplete_dates if ready else []
             ),
-            "personal_trimp_max": personal_trimp_max,
-            "personal_trimp_max_source": strain_calibration.get(
-                "personal_trimp_max_source"
-            ),
-            "strain_calibration_sessions": strain_calibration.get(
-                "strain_calibration_sessions"
-            ),
-            "strain_calibration_min_sessions": strain_calibration.get(
-                "strain_calibration_min_sessions"
-            ),
-            "strain_calibration_multiplier": strain_calibration.get(
-                "strain_calibration_multiplier"
-            ),
-            "strain_calibration_complete": strain_calibration.get(
-                "strain_calibration_complete", False
-            ),
+            **strain_calibration,
             "load_source": FITNESS_LOAD_SOURCE,
-            "algorithm_version": probe.get("algorithm_version"),
+            "algorithm_version": effective_context.history.algorithm_version,
             "max_hr": user_max_hr,
             "sex": sex,
         }
 
     def _empty_data(self, *, configured: bool) -> dict[str, Any]:
         """Return a stable data shape before Fitness is configured or available."""
-        strain_calibration = default_strain_calibration(complete=False)
         return {
             "configured": configured,
             "ready": False,
@@ -581,9 +448,14 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "load_focus_total_activities": None,
             "load_focus_covered_activities": None,
             "load_focus_incomplete_dates": [],
-            **strain_calibration,
+            "personal_trimp_max": DEFAULT_PERSONAL_TRIMP_MAX,
+            "personal_trimp_max_source": "default_unavailable",
+            "strain_calibration_sessions": None,
+            "strain_calibration_min_sessions": FITNESS_STRAIN_CALIBRATION_MIN_SESSIONS,
+            "strain_calibration_multiplier": FITNESS_STRAIN_CALIBRATION_MULTIPLIER,
+            "strain_calibration_complete": False,
             "load_source": FITNESS_LOAD_SOURCE,
-            "algorithm_version": 1,
+            "algorithm_version": GARMIN_FITNESS_ALGORITHM_VERSION,
             "max_hr": self.user_max_hr,
             "sex": self.sex,
         }
