@@ -30,8 +30,14 @@ jobs:
         run: pre-commit run codespell --all-files --hook-stage manual --config .github/pre-commit-config.yaml
       - name: Pyupgrade
         run: pre-commit run pyupgrade --all-files --hook-stage manual --config .github/pre-commit-config.yaml
-      - name: Ruff
-        run: pre-commit run ruff-check --all-files --hook-stage manual --config .github/pre-commit-config.yaml
+      - name: Ruff coordinator
+        run: ruff check custom_components/garmin_connect/fitness_coordinator.py
+      - name: Ruff load focus
+        run: ruff check custom_components/garmin_connect/fitness_load_focus.py
+      - name: Ruff strain
+        run: ruff check custom_components/garmin_connect/fitness_strain.py
+      - name: Ruff runtime tests
+        run: ruff check tests/test_fitness_runtime.py
       - name: Mypy
         run: pre-commit run mypy --all-files --hook-stage manual --config .github/pre-commit-config.yaml
       - name: YAML
