@@ -23,6 +23,7 @@ from .fitness_coordinator import FitnessCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 FITNESS_UNIT = "TRIMP"
+FITNESS_TRAINING_EFFECT_UNIT = "TE"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -76,6 +77,27 @@ FITNESS_SENSOR_DESCRIPTIONS: tuple[GarminFitnessSensorEntityDescription, ...] = 
         key="strain",
         name="Strain",
         state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+    ),
+    GarminFitnessSensorEntityDescription(
+        key="load_focus_low_aerobic",
+        name="Load focus low aerobic",
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=FITNESS_TRAINING_EFFECT_UNIT,
+        suggested_display_precision=1,
+    ),
+    GarminFitnessSensorEntityDescription(
+        key="load_focus_high_aerobic",
+        name="Load focus high aerobic",
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=FITNESS_TRAINING_EFFECT_UNIT,
+        suggested_display_precision=1,
+    ),
+    GarminFitnessSensorEntityDescription(
+        key="load_focus_anaerobic",
+        name="Load focus anaerobic",
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=FITNESS_TRAINING_EFFECT_UNIT,
         suggested_display_precision=1,
     ),
 )
@@ -189,6 +211,29 @@ class GarminFitnessSensor(CoordinatorEntity[FitnessCoordinator], SensorEntity):
             "ramp_period_days": data.get("ramp_period_days"),
             "strain_scale_max": data.get("strain_scale_max"),
             "hard_day_threshold": data.get("hard_day_threshold"),
+            "load_focus_algorithm_version": data.get(
+                "load_focus_algorithm_version"
+            ),
+            "load_focus_source": data.get("load_focus_source"),
+            "load_focus_high_aerobic_threshold": data.get(
+                "load_focus_high_aerobic_threshold"
+            ),
+            "load_focus_history_complete": data.get(
+                "load_focus_history_complete", False
+            ),
+            "load_focus_activity_coverage_percent": data.get(
+                "load_focus_activity_coverage_percent"
+            ),
+            "load_focus_total_activities": data.get(
+                "load_focus_total_activities"
+            ),
+            "load_focus_covered_activities": data.get(
+                "load_focus_covered_activities"
+            ),
+            "load_focus_incomplete_dates": data.get(
+                "load_focus_incomplete_dates"
+            )
+            or [],
             "personal_trimp_max": data.get("personal_trimp_max"),
             "personal_trimp_max_source": data.get("personal_trimp_max_source"),
             "strain_calibration_sessions": data.get("strain_calibration_sessions"),

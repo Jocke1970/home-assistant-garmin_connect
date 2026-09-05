@@ -17,6 +17,9 @@ def _history_data(*, complete: bool = True) -> dict:
         "history": [
             {
                 "date": "2026-09-02",
+                "load_focus_low_aerobic": 3.0,
+                "load_focus_high_aerobic": 4.0,
+                "load_focus_anaerobic": 1.0,
                 "daily_load": 10.0,
                 "ctl": 20.0,
                 "atl": 30.0,
@@ -27,6 +30,9 @@ def _history_data(*, complete: bool = True) -> dict:
             },
             {
                 "date": "2026-09-03",
+                "load_focus_low_aerobic": 2.0,
+                "load_focus_high_aerobic": 5.0,
+                "load_focus_anaerobic": 2.0,
                 "daily_load": 12.0,
                 "ctl": 21.0,
                 "atl": 31.0,
@@ -37,6 +43,9 @@ def _history_data(*, complete: bool = True) -> dict:
             },
             {
                 "date": "2026-09-04",
+                "load_focus_low_aerobic": 0.0,
+                "load_focus_high_aerobic": 0.0,
+                "load_focus_anaerobic": 0.0,
                 "daily_load": 5.0,
                 "ctl": 19.0,
                 "atl": 25.0,
@@ -80,8 +89,8 @@ def test_backfill_imports_completed_days_for_all_fitness_sensors() -> None:
             _history_data(),
         )
 
-    assert imported == 14
-    assert import_statistics.call_count == 7
+    assert imported == 20
+    assert import_statistics.call_count == 10
 
     by_statistic_id = {
         call.args[1]["statistic_id"]: (call.args[1], call.args[2])
@@ -95,6 +104,9 @@ def test_backfill_imports_completed_days_for_all_fitness_sensors() -> None:
         "sensor.garmin_fitness_acwr",
         "sensor.garmin_fitness_ramp_rate",
         "sensor.garmin_fitness_strain",
+        "sensor.garmin_fitness_load_focus_low_aerobic",
+        "sensor.garmin_fitness_load_focus_high_aerobic",
+        "sensor.garmin_fitness_load_focus_anaerobic",
     }
 
     metadata, statistics = by_statistic_id["sensor.garmin_fitness_ctl"]
@@ -122,6 +134,12 @@ def test_backfill_imports_completed_days_for_all_fitness_sensors() -> None:
     ]
     assert strain_metadata["unit_of_measurement"] is None
     assert [row["mean"] for row in strain_statistics] == [2.1, 2.5]
+
+    focus_metadata, focus_statistics = by_statistic_id[
+        "sensor.garmin_fitness_load_focus_low_aerobic"
+    ]
+    assert focus_metadata["unit_of_measurement"] == "TE"
+    assert [row["mean"] for row in focus_statistics] == [3.0, 2.0]
 
 
 def test_backfill_skips_missing_rolling_metric_values() -> None:
@@ -154,8 +172,8 @@ def test_backfill_skips_missing_rolling_metric_values() -> None:
     ):
         imported = async_backfill_fitness_statistics(hass, "entry_1", data)
 
-    # Five always-defined metrics contribute two rows each; ACWR and ramp one each.
-    assert imported == 12
+    # Eight always-defined metrics contribute two rows each; ACWR and ramp one each.
+    assert imported == 18
     by_statistic_id = {
         call.args[1]["statistic_id"]: call.args[2]
         for call in import_statistics.call_args_list

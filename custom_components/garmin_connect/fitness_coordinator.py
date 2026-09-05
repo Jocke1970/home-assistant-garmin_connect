@@ -30,6 +30,9 @@ from .const import (
     FITNESS_ACWR_CHRONIC_DAYS,
     FITNESS_CALCULATION_DAYS,
     FITNESS_HISTORY_DAYS,
+    FITNESS_LOAD_FOCUS_ALGORITHM_VERSION,
+    FITNESS_LOAD_FOCUS_HIGH_AEROBIC_THRESHOLD,
+    FITNESS_LOAD_FOCUS_SOURCE,
     FITNESS_RAMP_PERIOD_DAYS,
     FITNESS_RECOVERY_MIN_WARMUP_DAYS,
     FITNESS_STRAIN_HARD_DAY_THRESHOLD,
@@ -137,6 +140,49 @@ def _augment_training_metrics(
             point["ramp_rate"] = None
 
     return normalized
+
+
+def _merge_load_focus_metrics(
+    points: list[dict[str, Any]],
+    load_focus: Any,
+) -> list[dict[str, Any]]:
+    """Merge date-aligned daily Training Effect mix into canonical history."""
+    raw_points = load_focus.get("points") if isinstance(load_focus, dict) else None
+    focus_by_date: dict[str, dict[str, Any]] = {}
+    if isinstance(raw_points, list):
+        for raw in raw_points:
+            if not isinstance(raw, dict):
+                continue
+            raw_date = raw.get("date")
+            if isinstance(raw_date, str):
+                focus_by_date[raw_date] = raw
+
+    merged: list[dict[str, Any]] = []
+    for point in points:
+        item = dict(point)
+        point_date = item.get("date")
+        focus = focus_by_date.get(point_date) if isinstance(point_date, str) else None
+        complete = bool(focus and focus.get("complete") is True)
+        item["load_focus_complete"] = complete
+        item["load_focus_activity_count"] = (
+            int(focus.get("activity_count") or 0) if focus else 0
+        )
+        item["load_focus_covered_activities"] = (
+            int(focus.get("covered_activities") or 0) if focus else 0
+        )
+        for target, source in (
+            ("load_focus_low_aerobic", "low_aerobic"),
+            ("load_focus_high_aerobic", "high_aerobic"),
+            ("load_focus_anaerobic", "anaerobic"),
+        ):
+            value = focus.get(source) if focus else None
+            item[target] = (
+                float(value)
+                if not isinstance(value, bool) and isinstance(value, int | float)
+                else None
+            )
+        merged.append(item)
+    return merged
 
 
 class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -346,12 +392,48 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if all_points
                 else []
             )
+            enriched_points = _merge_load_focus_metrics(
+                enriched_points,
+                effective_probe.get("load_focus"),
+            )
         except ValueError as err:
             raise UpdateFailed(f"Error calculating Garmin Fitness metrics: {err}") from err
 
         visible_points = enriched_points[-FITNESS_HISTORY_DAYS:]
         visible_history_complete = len(visible_points) == FITNESS_HISTORY_DAYS
         latest = visible_points[-1] if visible_points else {}
+        load_focus_total_activities = sum(
+            int(point.get("load_focus_activity_count") or 0)
+            for point in visible_points
+            if isinstance(point, dict)
+        )
+        load_focus_covered_activities = sum(
+            int(point.get("load_focus_covered_activities") or 0)
+            for point in visible_points
+            if isinstance(point, dict)
+        )
+        load_focus_history_complete = bool(visible_points) and all(
+            point.get("load_focus_complete") is True
+            for point in visible_points
+            if isinstance(point, dict)
+        )
+        load_focus_incomplete_dates = [
+            str(point.get("date"))
+            for point in visible_points
+            if isinstance(point, dict)
+            and point.get("load_focus_complete") is not True
+            and isinstance(point.get("date"), str)
+        ]
+        load_focus_coverage_percent = (
+            round(
+                load_focus_covered_activities
+                / load_focus_total_activities
+                * 100.0,
+                1,
+            )
+            if load_focus_total_activities
+            else 100.0
+        )
         ready = (
             bool(effective_series.get("ready"))
             and visible_history_complete
@@ -380,6 +462,15 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "acwr": latest.get("acwr") if ready else None,
             "ramp_rate": latest.get("ramp_rate") if ready else None,
             "strain": latest.get("strain") if ready else None,
+            "load_focus_low_aerobic": (
+                latest.get("load_focus_low_aerobic") if ready else None
+            ),
+            "load_focus_high_aerobic": (
+                latest.get("load_focus_high_aerobic") if ready else None
+            ),
+            "load_focus_anaerobic": (
+                latest.get("load_focus_anaerobic") if ready else None
+            ),
             "history": visible_points if ready else [],
             "history_days": FITNESS_HISTORY_DAYS,
             "history_start": history_start if ready else None,
@@ -402,6 +493,26 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "ramp_period_days": FITNESS_RAMP_PERIOD_DAYS,
             "strain_scale_max": FITNESS_STRAIN_SCALE_MAX,
             "hard_day_threshold": FITNESS_STRAIN_HARD_DAY_THRESHOLD,
+            "load_focus_algorithm_version": FITNESS_LOAD_FOCUS_ALGORITHM_VERSION,
+            "load_focus_source": FITNESS_LOAD_FOCUS_SOURCE,
+            "load_focus_high_aerobic_threshold": (
+                FITNESS_LOAD_FOCUS_HIGH_AEROBIC_THRESHOLD
+            ),
+            "load_focus_history_complete": (
+                load_focus_history_complete if ready else False
+            ),
+            "load_focus_activity_coverage_percent": (
+                load_focus_coverage_percent if ready else None
+            ),
+            "load_focus_total_activities": (
+                load_focus_total_activities if ready else None
+            ),
+            "load_focus_covered_activities": (
+                load_focus_covered_activities if ready else None
+            ),
+            "load_focus_incomplete_dates": (
+                load_focus_incomplete_dates if ready else []
+            ),
             "personal_trimp_max": personal_trimp_max,
             "personal_trimp_max_source": strain_calibration.get(
                 "personal_trimp_max_source"
@@ -437,6 +548,9 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "acwr": None,
             "ramp_rate": None,
             "strain": None,
+            "load_focus_low_aerobic": None,
+            "load_focus_high_aerobic": None,
+            "load_focus_anaerobic": None,
             "history": [],
             "history_days": FITNESS_HISTORY_DAYS,
             "history_start": None,
@@ -457,6 +571,16 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "ramp_period_days": FITNESS_RAMP_PERIOD_DAYS,
             "strain_scale_max": FITNESS_STRAIN_SCALE_MAX,
             "hard_day_threshold": FITNESS_STRAIN_HARD_DAY_THRESHOLD,
+            "load_focus_algorithm_version": FITNESS_LOAD_FOCUS_ALGORITHM_VERSION,
+            "load_focus_source": FITNESS_LOAD_FOCUS_SOURCE,
+            "load_focus_high_aerobic_threshold": (
+                FITNESS_LOAD_FOCUS_HIGH_AEROBIC_THRESHOLD
+            ),
+            "load_focus_history_complete": False,
+            "load_focus_activity_coverage_percent": None,
+            "load_focus_total_activities": None,
+            "load_focus_covered_activities": None,
+            "load_focus_incomplete_dates": [],
             **strain_calibration,
             "load_source": FITNESS_LOAD_SOURCE,
             "algorithm_version": 1,

@@ -78,7 +78,7 @@ async def test_probe_reports_trimp_comparison_and_series_readiness() -> None:
         sex="male",
     )
 
-    assert result["probe_version"] == 4
+    assert result["probe_version"] == 5
     assert result["algorithm_version"] == 1
     assert result["configuration"] == {"max_hr": 175, "sex": "male"}
     assert result["activity_detail_requests"] == 0
@@ -254,3 +254,54 @@ async def test_probe_rejects_invalid_window() -> None:
 
     with pytest.raises(ValueError, match="between 1 and 365"):
         await build_fitness_probe(client, days=0)
+
+
+@pytest.mark.asyncio
+async def test_probe_builds_strict_training_effect_load_focus() -> None:
+    client = AsyncMock()
+    client.get_activities.return_value = [
+        {
+            **_activity(3, "2026-09-03"),
+            "aerobicTrainingEffect": 1.5,
+        },
+        {
+            **_activity(2, "2026-09-02"),
+            "aerobicTrainingEffect": 4.0,
+            "anaerobicTrainingEffect": 3.0,
+        },
+        {
+            **_activity(1, "2026-09-01"),
+            "aerobicTrainingEffect": 2.5,
+            "anaerobicTrainingEffect": 0.2,
+        },
+    ]
+    _configure_resting_hr(
+        client,
+        {"2026-09-01": 55, "2026-09-02": 55, "2026-09-03": 55},
+    )
+
+    result = await build_fitness_probe(
+        client,
+        days=4,
+        end_date=date(2026, 9, 4),
+    )
+
+    focus = result["load_focus"]
+    assert focus["algorithm_version"] == 1
+    assert focus["source"] == "garmin_training_effect"
+    assert focus["high_aerobic_threshold"] == 3.0
+    assert focus["total_activities"] == 3
+    assert focus["covered_activities"] == 2
+    assert focus["missing_activities"] == 1
+    assert focus["activity_coverage_percent"] == pytest.approx(66.7)
+    assert focus["first_incomplete_dates"] == ["2026-09-03"]
+
+    by_date = {point["date"]: point for point in focus["points"]}
+    assert by_date["2026-09-01"]["low_aerobic"] == 2.5
+    assert by_date["2026-09-01"]["anaerobic"] == 0.2
+    assert by_date["2026-09-02"]["high_aerobic"] == 4.0
+    assert by_date["2026-09-02"]["anaerobic"] == 3.0
+    assert by_date["2026-09-03"]["complete"] is False
+    assert by_date["2026-09-03"]["low_aerobic"] is None
+    assert by_date["2026-09-04"]["complete"] is True
+    assert by_date["2026-09-04"]["low_aerobic"] == 0.0

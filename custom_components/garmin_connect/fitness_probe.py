@@ -17,6 +17,13 @@ from ha_garmin import GarminClient
 from ha_garmin.const import GARMIN_CONNECT_API
 from ha_garmin.exceptions import GarminAuthError, GarminConnectError
 
+from .const import (
+    FITNESS_LOAD_FOCUS_ALGORITHM_VERSION,
+    FITNESS_LOAD_FOCUS_HIGH_AEROBIC_THRESHOLD,
+    FITNESS_LOAD_FOCUS_SOURCE,
+)
+from .fitness_load_focus import build_load_focus_day
+
 _PAGE_SIZE = 100
 _MAX_PAGES = 50
 _RECENT_ACTIVITY_LIMIT = 10
@@ -536,6 +543,79 @@ def _compare_daily_loads(
     }
 
 
+def _build_load_focus_series(
+    by_day: dict[date, list[dict[str, Any]]],
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    """Build a strict daily Training Effect mix without load weighting."""
+    points: list[dict[str, Any]] = []
+    covered_activities = 0
+    missing_activities = 0
+    complete_activity_days = 0
+    incomplete_activity_days: list[date] = []
+
+    current = start_date
+    while current <= end_date:
+        items = by_day.get(current, [])
+        day = build_load_focus_day(
+            (
+                (
+                    _number(item.get("aerobicTrainingEffect")),
+                    _number(item.get("anaerobicTrainingEffect")),
+                )
+                for item in items
+            ),
+            high_aerobic_threshold=FITNESS_LOAD_FOCUS_HIGH_AEROBIC_THRESHOLD,
+        )
+        covered_activities += int(day["covered_activities"])
+        missing_activities += int(day["missing_activities"])
+        if items:
+            if day["complete"]:
+                complete_activity_days += 1
+            else:
+                incomplete_activity_days.append(current)
+
+        points.append(
+            {
+                "date": current.isoformat(),
+                "complete": day["complete"],
+                "activity_count": day["activity_count"],
+                "covered_activities": day["covered_activities"],
+                "missing_activities": day["missing_activities"],
+                "low_aerobic": day["low_aerobic"],
+                "high_aerobic": day["high_aerobic"],
+                "anaerobic": day["anaerobic"],
+                "known_low_aerobic": day["known_low_aerobic"],
+                "known_high_aerobic": day["known_high_aerobic"],
+                "known_anaerobic": day["known_anaerobic"],
+            }
+        )
+        current += timedelta(days=1)
+
+    total_activities = covered_activities + missing_activities
+    return {
+        "algorithm_version": FITNESS_LOAD_FOCUS_ALGORITHM_VERSION,
+        "source": FITNESS_LOAD_FOCUS_SOURCE,
+        "high_aerobic_threshold": FITNESS_LOAD_FOCUS_HIGH_AEROBIC_THRESHOLD,
+        "complete": missing_activities == 0,
+        "total_activities": total_activities,
+        "covered_activities": covered_activities,
+        "missing_activities": missing_activities,
+        "activity_coverage_percent": (
+            round(covered_activities / total_activities * 100.0, 1)
+            if total_activities
+            else 100.0
+        ),
+        "complete_activity_days": complete_activity_days,
+        "incomplete_activity_days": len(incomplete_activity_days),
+        "first_incomplete_dates": [
+            day.isoformat() for day in sorted(incomplete_activity_days, reverse=True)[:10]
+        ],
+        "points": points,
+    }
+
+
 async def build_fitness_probe(
     client: GarminClient,
     days: int = 90,
@@ -581,6 +661,8 @@ async def build_fitness_probe(
         item_date = _activity_date(item)
         if item_date is not None:
             by_day[item_date].append(item)
+
+    load_focus = _build_load_focus_series(by_day, start_date, end_date)
 
     activity_days = len(by_day)
     complete_garmin_days = sum(
@@ -658,7 +740,7 @@ async def build_fitness_probe(
     ][:_RECENT_ACTIVITY_LIMIT]
     remaining_requirements = [] if trimp_configured else ["explicit max_hr", "sex"]
     return {
-        "probe_version": 4,
+        "probe_version": 5,
         "algorithm_version": _ALGORITHM_VERSION,
         "read_only": True,
         "window": {
@@ -717,6 +799,7 @@ async def build_fitness_probe(
             "remaining_requirements": remaining_requirements,
         },
         "comparison": comparison,
+        "load_focus": load_focus,
         "training_series": {
             "garmin": _training_series(garmin_daily),
             "trimp": _training_series(trimp_daily) if trimp_configured else None,

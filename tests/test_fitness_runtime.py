@@ -53,6 +53,35 @@ def _training_points(days: int = 180) -> list[dict]:
     return points
 
 
+def _load_focus_points(days: int = 180) -> list[dict]:
+    start = date(2026, 9, 4) - timedelta(days=days - 1)
+    points = []
+    for offset in range(days):
+        point_date = start + timedelta(days=offset)
+        points.append(
+            {
+                "date": point_date.isoformat(),
+                "complete": True,
+                "activity_count": 0,
+                "covered_activities": 0,
+                "missing_activities": 0,
+                "low_aerobic": 0.0,
+                "high_aerobic": 0.0,
+                "anaerobic": 0.0,
+            }
+        )
+    points[-1].update(
+        {
+            "activity_count": 1,
+            "covered_activities": 1,
+            "low_aerobic": 2.2,
+            "high_aerobic": 0.0,
+            "anaerobic": 0.3,
+        }
+    )
+    return points
+
+
 @pytest.fixture(autouse=True)
 def mock_strain_calibration():
     calibration = {
@@ -119,6 +148,7 @@ async def test_fitness_coordinator_uses_warmup_and_exposes_last_90_days() -> Non
                 "latest": points[-1],
             }
         },
+        "load_focus": {"points": _load_focus_points()},
     }
 
     with patch(
@@ -142,6 +172,14 @@ async def test_fitness_coordinator_uses_warmup_and_exposes_last_90_days() -> Non
     assert data["acwr"] == 4.0
     assert data["ramp_rate"] == -0.2
     assert data["strain"] == 1.27
+    assert data["load_focus_low_aerobic"] == 2.2
+    assert data["load_focus_high_aerobic"] == 0.0
+    assert data["load_focus_anaerobic"] == 0.3
+    assert data["load_focus_history_complete"] is True
+    assert data["load_focus_activity_coverage_percent"] == 100.0
+    assert data["load_focus_total_activities"] == 1
+    assert data["load_focus_covered_activities"] == 1
+    assert data["load_focus_incomplete_dates"] == []
     assert data["load_source"] == "trimp"
     assert data["algorithm_version"] == 1
     assert data["history_days"] == 90
@@ -332,6 +370,9 @@ def test_fitness_sensor_exposes_value_and_provenance_without_history_attribute()
         "acwr": 0.82,
         "ramp_rate": -1.25,
         "strain": 1.08,
+        "load_focus_low_aerobic": 2.4,
+        "load_focus_high_aerobic": 0.0,
+        "load_focus_anaerobic": 0.5,
         "history": [{"date": "2026-09-03", "daily_load": 6.708}],
         "history_days": 90,
         "history_start": "2026-06-06",
@@ -352,6 +393,14 @@ def test_fitness_sensor_exposes_value_and_provenance_without_history_attribute()
         "ramp_period_days": 7,
         "strain_scale_max": 21.0,
         "hard_day_threshold": 14.0,
+        "load_focus_algorithm_version": 1,
+        "load_focus_source": "garmin_training_effect",
+        "load_focus_high_aerobic_threshold": 3.0,
+        "load_focus_history_complete": True,
+        "load_focus_activity_coverage_percent": 100.0,
+        "load_focus_total_activities": 12,
+        "load_focus_covered_activities": 12,
+        "load_focus_incomplete_dates": [],
         "personal_trimp_max": 120.0,
         "personal_trimp_max_source": "calibrated",
         "strain_calibration_sessions": 40,
@@ -385,6 +434,11 @@ def test_fitness_sensor_exposes_value_and_provenance_without_history_attribute()
     assert sensor.extra_state_attributes["ramp_period_days"] == 7
     assert sensor.extra_state_attributes["strain_scale_max"] == 21.0
     assert sensor.extra_state_attributes["hard_day_threshold"] == 14.0
+    assert sensor.extra_state_attributes["load_focus_algorithm_version"] == 1
+    assert sensor.extra_state_attributes["load_focus_source"] == "garmin_training_effect"
+    assert sensor.extra_state_attributes["load_focus_high_aerobic_threshold"] == 3.0
+    assert sensor.extra_state_attributes["load_focus_history_complete"] is True
+    assert sensor.extra_state_attributes["load_focus_activity_coverage_percent"] == 100.0
     assert sensor.extra_state_attributes["personal_trimp_max"] == 120.0
     assert sensor.extra_state_attributes["personal_trimp_max_source"] == "calibrated"
     assert sensor.extra_state_attributes["strain_calibration_sessions"] == 40
@@ -405,12 +459,23 @@ def test_fitness_sensor_exposes_value_and_provenance_without_history_attribute()
         next(item for item in FITNESS_SENSOR_DESCRIPTIONS if item.key == "strain"),
         "entry_1",
     )
+    low_focus_sensor = GarminFitnessSensor(
+        coordinator,
+        next(
+            item
+            for item in FITNESS_SENSOR_DESCRIPTIONS
+            if item.key == "load_focus_low_aerobic"
+        ),
+        "entry_1",
+    )
     assert acwr_sensor.native_value == 0.82
     assert acwr_sensor.native_unit_of_measurement is None
     assert ramp_sensor.native_value == -1.25
     assert ramp_sensor.native_unit_of_measurement == "TRIMP"
     assert strain_sensor.native_value == 1.08
     assert strain_sensor.native_unit_of_measurement is None
+    assert low_focus_sensor.native_value == 2.4
+    assert low_focus_sensor.native_unit_of_measurement == "TE"
 
 
 async def test_add_fitness_entities_uses_loaded_garmin_sensor_platform() -> None:
@@ -430,7 +495,7 @@ async def test_add_fitness_entities_uses_loaded_garmin_sensor_platform() -> None
 
     platform.async_add_entities.assert_awaited_once()
     entities = list(platform.async_add_entities.await_args.args[0])
-    assert len(entities) == 7
+    assert len(entities) == 10
     assert {entity.unique_id for entity in entities} == {
         "entry_1_fitness_daily_load",
         "entry_1_fitness_ctl",
@@ -439,4 +504,7 @@ async def test_add_fitness_entities_uses_loaded_garmin_sensor_platform() -> None
         "entry_1_fitness_acwr",
         "entry_1_fitness_ramp_rate",
         "entry_1_fitness_strain",
+        "entry_1_fitness_load_focus_low_aerobic",
+        "entry_1_fitness_load_focus_high_aerobic",
+        "entry_1_fitness_load_focus_anaerobic",
     }
