@@ -1,0 +1,90 @@
+name: Garmin Gear M1
+
+on:
+  push:
+    branches: [feature/garmin-gear]
+    paths:
+      - .github/workflows/garmin-gear-m1.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: feature/garmin-gear
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Wire Garmin Gear engine into integration
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          init = Path("custom_components/garmin_connect/__init__.py")
+          text = init.read_text()
+          gear_import = "from .gear_sensor import async_add_gear_sensor_entities\n"
+          if gear_import not in text:
+              anchor = "from .fitness_statistics import async_backfill_fitness_statistics\n"
+              if anchor not in text:
+                  raise SystemExit("Gear import anchor missing")
+              text = text.replace(anchor, anchor + gear_import, 1)
+
+          gear_call = "    await async_add_gear_sensor_entities(hass, entry, coordinators.gear)\n"
+          if gear_call not in text:
+              anchor = "    await async_add_fitness_sensor_entities(hass, entry, fitness)\n"
+              if anchor not in text:
+                  raise SystemExit("Gear setup anchor missing")
+              text = text.replace(anchor, anchor + gear_call, 1)
+          init.write_text(text)
+
+          ha_garmin_sha = "b06ffad8bb4a4e785b0b1d057b9d7df00b84d033"
+          manifest_path = Path("custom_components/garmin_connect/manifest.json")
+          manifest = json.loads(manifest_path.read_text())
+          manifest["requirements"] = [
+              f"ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@{ha_garmin_sha}"
+          ]
+          manifest["version"] = "3.0.23-gear-m1.1"
+          manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+          requirements = Path("requirements.txt")
+          lines = requirements.read_text().splitlines()
+          lines = [
+              (
+                  f"ha-garmin @ git+https://github.com/Jocke1970/ha-garmin.git@{ha_garmin_sha}"
+                  if line.startswith("ha-garmin @ git+")
+                  else line
+              )
+              for line in lines
+          ]
+          requirements.write_text("\n".join(lines) + "\n")
+          PY
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements_lint.txt
+
+      - name: Pre-commit
+        run: pre-commit run --all-files --hook-stage manual --config .github/pre-commit-config.yaml
+
+      - name: Full pytest
+        run: pytest tests/ -q
+
+      - name: Commit validated M1 integration and remove workflow
+        run: |
+          rm .github/workflows/garmin-gear-m1.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add custom_components/garmin_connect/__init__.py \
+                  custom_components/garmin_connect/manifest.json \
+                  custom_components/garmin_connect/gear_engine.py \
+                  custom_components/garmin_connect/gear_sensor.py \
+                  requirements.txt tests/test_gear_engine.py \
+                  .github/workflows/garmin-gear-m1.yml
+          git commit -m "feat(gear): add native Garmin Gear M1 engine"
+          git push origin HEAD:feature/garmin-gear
