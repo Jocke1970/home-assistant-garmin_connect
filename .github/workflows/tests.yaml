@@ -26,7 +26,22 @@ jobs:
         with:
           python-version: "3.14"
       - run: pip install -r requirements.txt -r requirements_lint.txt
-      - run: pre-commit run --all-files --hook-stage manual --config .github/pre-commit-config.yaml
+      - name: Codespell
+        run: pre-commit run codespell --all-files --hook-stage manual --config .github/pre-commit-config.yaml
+      - name: Pyupgrade
+        run: pre-commit run pyupgrade --all-files --hook-stage manual --config .github/pre-commit-config.yaml
+      - name: Ruff
+        run: pre-commit run ruff-check --all-files --hook-stage manual --config .github/pre-commit-config.yaml
+      - name: Mypy
+        run: pre-commit run mypy --all-files --hook-stage manual --config .github/pre-commit-config.yaml
+      - name: YAML
+        run: pre-commit run check-yaml --all-files --hook-stage manual --config .github/pre-commit-config.yaml
+      - name: JSON
+        run: pre-commit run check-json --all-files --hook-stage manual --config .github/pre-commit-config.yaml
+      - name: AST
+        run: pre-commit run check-ast --all-files --hook-stage manual --config .github/pre-commit-config.yaml
+      - name: Line endings
+        run: pre-commit run mixed-line-ending --all-files --hook-stage manual --config .github/pre-commit-config.yaml
 
   tests:
     name: Pytest
