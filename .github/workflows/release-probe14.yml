@@ -12,7 +12,6 @@ permissions:
 
 jobs:
   release:
-    if: github.event.head_commit.message == 'chore: release Garmin Fitness probe 14'
     runs-on: ubuntu-latest
     steps:
       - name: Create GitHub release
