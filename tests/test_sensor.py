@@ -797,6 +797,9 @@ def test_gear_sensor_attributes() -> None:
     attrs = sensor.extra_state_attributes
     assert attrs["gear_uuid"] == "gear-uuid-1"
     assert attrs["total_activities"] == 50
+    assert attrs["usage_type"] == "DURATION"
+    assert attrs["duration_used_seconds"] == 12345
+    assert attrs["days_used"] == 42
     assert attrs["gear_make_name"] == "Nike"
     assert attrs["default_for_activity"] == ["running"]
 
