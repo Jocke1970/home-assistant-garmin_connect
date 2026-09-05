@@ -16,49 +16,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Make coordinator patch anchor deterministic
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          path = Path(".github/scripts/apply_fitness_load_focus.py")
-          text = path.read_text()
-
-          helper_anchor = '''def replace_once(path: Path, old: str, new: str, label: str) -> None:
-    text = path.read_text()
-    count = text.count(old)
-    if count != 1:
-        raise SystemExit(f"{path}: {label}: expected 1 match, found {count}")
-    path.write_text(text.replace(old, new, 1))
-'''
-          helper_replacement = helper_anchor + '''
-
-def replace_first(path: Path, old: str, new: str, label: str) -> None:
-    text = path.read_text()
-    count = text.count(old)
-    if count < 1:
-        raise SystemExit(f"{path}: {label}: expected at least 1 match, found {count}")
-    path.write_text(text.replace(old, new, 1))
-'''
-          if text.count(helper_anchor) != 1:
-              raise SystemExit("Could not locate replace_once helper")
-          text = text.replace(helper_anchor, helper_replacement, 1)
-
-          call_anchor = '''replace_once(
-    coord,
-    '            "hard_day_threshold": FITNESS_STRAIN_HARD_DAY_THRESHOLD,\\n',
-'''
-          call_replacement = '''replace_first(
-    coord,
-    '            "hard_day_threshold": FITNESS_STRAIN_HARD_DAY_THRESHOLD,\\n',
-'''
-          if text.count(call_anchor) != 1:
-              raise SystemExit(
-                  f"Could not uniquely locate coordinator attrs call: {text.count(call_anchor)}"
-              )
-          text = text.replace(call_anchor, call_replacement, 1)
-          path.write_text(text)
-          PY
+      - name: Make patch anchor deterministic
+        run: python .github/scripts/fix_fitness_load_focus_patch.py
 
       - name: Apply Load Focus patch
         run: python .github/scripts/apply_fitness_load_focus.py
@@ -76,6 +35,7 @@ def replace_first(path: Path, old: str, new: str, label: str) -> None:
         run: |
           rm .github/workflows/apply-fitness-load-focus.yml
           rm .github/scripts/apply_fitness_load_focus.py
+          rm .github/scripts/fix_fitness_load_focus_patch.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
