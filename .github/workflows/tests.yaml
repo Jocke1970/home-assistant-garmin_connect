@@ -14,11 +14,11 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   lint:
-    name: Ruff import autofix
+    name: Pre-commit checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -26,16 +26,16 @@ jobs:
         with:
           python-version: "3.14"
       - run: pip install -r requirements.txt -r requirements_lint.txt
-      - name: Fix load-focus imports
-        run: ruff check --select I --fix custom_components/garmin_connect/fitness_load_focus.py
-      - name: Commit formatter result
-        run: |
-          if git diff --quiet; then
-            echo "No import changes needed"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add custom_components/garmin_connect/fitness_load_focus.py
-          git commit -m "style(fitness): apply ruff import ordering"
-          git push origin HEAD:feature/garmin-fitness-handoff
+      - run: pre-commit run --all-files --hook-stage manual --config .github/pre-commit-config.yaml
+
+  tests:
+    name: Pytest
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - run: pip install -r requirements.txt -r requirements_lint.txt
+      - run: pytest tests/ -q
