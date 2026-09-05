@@ -1,3 +1,4 @@
+# One-shot workflow: removed automatically after successful patch.
 name: Patch accessory battery entities
 
 on:
