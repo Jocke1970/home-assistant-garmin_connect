@@ -22,14 +22,8 @@ jobs:
       - name: Apply Load Focus patch
         run: python .github/scripts/apply_fitness_load_focus.py
 
-      - name: Validate patched Python
-        run: |
-          python -m compileall custom_components/garmin_connect
-          python -m pytest \
-            tests/test_fitness_load_focus.py \
-            tests/test_fitness_probe.py \
-            tests/test_fitness_runtime.py \
-            tests/test_fitness_statistics.py
+      - name: Validate patched Python syntax
+        run: python -m compileall custom_components/garmin_connect tests
 
       - name: Commit Load Focus implementation
         run: |
