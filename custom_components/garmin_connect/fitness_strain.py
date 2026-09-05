@@ -14,8 +14,10 @@ from ha_garmin import GarminClient, GarminHistoryClient
 from ha_garmin.fitness import (
     Sex,
     calibrate_personal_trimp_max,
-    compute_strain_score as _compute_strain_score,
     compute_trimp,
+)
+from ha_garmin.fitness import (
+    compute_strain_score as _compute_strain_score,
 )
 
 from .const import (
