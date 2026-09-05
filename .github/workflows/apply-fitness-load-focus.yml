@@ -1,0 +1,39 @@
+name: Apply Garmin Fitness Load Focus
+
+on:
+  push:
+    branches:
+      - feature/garmin-fitness
+    paths:
+      - .github/workflows/apply-fitness-load-focus.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply Load Focus patch
+        run: python .github/scripts/apply_fitness_load_focus.py
+
+      - name: Validate patched Python
+        run: |
+          python -m compileall custom_components/garmin_connect
+          python -m pytest \
+            tests/test_fitness_load_focus.py \
+            tests/test_fitness_probe.py \
+            tests/test_fitness_runtime.py \
+            tests/test_fitness_statistics.py
+
+      - name: Commit Load Focus implementation
+        run: |
+          rm .github/workflows/apply-fitness-load-focus.yml
+          rm .github/scripts/apply_fitness_load_focus.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: add Garmin Fitness load focus metrics"
+          git push
