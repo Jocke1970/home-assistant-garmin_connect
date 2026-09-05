@@ -1,4 +1,4 @@
-"""Make the temporary Load Focus patch script's coordinator anchor deterministic."""
+"""Make temporary Load Focus patch-script anchors deterministic."""
 
 from pathlib import Path
 
@@ -25,17 +25,33 @@ if text.count(helper_anchor) != 1:
     raise SystemExit("Could not locate replace_once helper")
 text = text.replace(helper_anchor, helper_replacement, 1)
 
-call_anchor = '''replace_once(
+coordinator_anchor = '''replace_once(
     coord,
     '            "hard_day_threshold": FITNESS_STRAIN_HARD_DAY_THRESHOLD,\\n',
 '''
-call_replacement = '''replace_first(
+coordinator_replacement = '''replace_first(
     coord,
     '            "hard_day_threshold": FITNESS_STRAIN_HARD_DAY_THRESHOLD,\\n',
 '''
-if text.count(call_anchor) != 1:
+if text.count(coordinator_anchor) != 1:
     raise SystemExit(
-        f"Could not uniquely locate coordinator attrs call: {text.count(call_anchor)}"
+        "Could not uniquely locate coordinator attrs call: "
+        f"{text.count(coordinator_anchor)}"
     )
-text = text.replace(call_anchor, call_replacement, 1)
+text = text.replace(coordinator_anchor, coordinator_replacement, 1)
+
+runtime_anchor = (
+    "replace_once(\n"
+    "    runtime,\n"
+    "    '''        \"training_series\": {\\n"
+    "            \"trimp\": {\\n"
+)
+runtime_replacement = runtime_anchor.replace("replace_once(", "replace_first(", 1)
+if text.count(runtime_anchor) != 1:
+    raise SystemExit(
+        "Could not uniquely locate runtime training-series patch call: "
+        f"{text.count(runtime_anchor)}"
+    )
+text = text.replace(runtime_anchor, runtime_replacement, 1)
+
 path.write_text(text)
