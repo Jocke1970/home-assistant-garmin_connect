@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Make patch anchor deterministic
+      - name: Make patch anchors deterministic
         run: python .github/scripts/fix_fitness_load_focus_patch.py
 
       - name: Apply Load Focus patch
