@@ -32,8 +32,16 @@ jobs:
         run: pre-commit run pyupgrade --all-files --hook-stage manual --config .github/pre-commit-config.yaml
       - name: Ruff coordinator
         run: ruff check custom_components/garmin_connect/fitness_coordinator.py
-      - name: Ruff load focus
-        run: ruff check custom_components/garmin_connect/fitness_load_focus.py
+      - name: Load focus imports
+        run: ruff check --select I custom_components/garmin_connect/fitness_load_focus.py
+      - name: Load focus upgrades
+        run: ruff check --select UP custom_components/garmin_connect/fitness_load_focus.py
+      - name: Load focus naming
+        run: ruff check --select N custom_components/garmin_connect/fitness_load_focus.py
+      - name: Load focus bugs
+        run: ruff check --select B,C4 custom_components/garmin_connect/fitness_load_focus.py
+      - name: Load focus basics
+        run: ruff check --select E,F,W custom_components/garmin_connect/fitness_load_focus.py
       - name: Ruff strain
         run: ruff check custom_components/garmin_connect/fitness_strain.py
       - name: Ruff runtime tests
