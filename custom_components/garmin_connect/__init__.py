@@ -44,6 +44,7 @@ from .fitness_service import (
     async_unload_fitness_probe_service,
 )
 from .fitness_statistics import async_backfill_fitness_statistics
+from .gear_sensor import async_add_gear_sensor_entities
 from .services import async_setup_services, async_unload_services
 
 _LOGGER = logging.getLogger(__name__)
@@ -231,6 +232,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: GarminConnectConfigEntry
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     await async_add_fitness_sensor_entities(hass, entry, fitness)
+    await async_add_gear_sensor_entities(hass, entry, coordinators.gear)
     async_backfill_fitness_statistics(hass, entry.entry_id, fitness.data or {})
 
     if not hass.services.has_service(DOMAIN, "set_active_gear"):

@@ -17,7 +17,7 @@
   ],
   "quality_scale": "gold",
   "requirements": [
-    "ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@378c01c5d95873a12e450078fc841bbfced8d090"
+    "ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@b06ffad8bb4a4e785b0b1d057b9d7df00b84d033"
   ],
-  "version": "3.0.22-fitness-handoff.1"
+  "version": "3.0.23-gear-m1.1"
 }
