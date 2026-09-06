@@ -1,0 +1,48 @@
+name: Gear pictures dev.1 release temp
+
+on:
+  push:
+    branches:
+      - feature/garmin-gear
+    paths:
+      - .gear-pictures-dev1-release-trigger
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: feature/garmin-gear
+          fetch-depth: 0
+
+      - name: Remove one-shot files
+        run: rm -f .github/workflows/gear-pictures-dev1-release-temp.yml .gear-pictures-dev1-release-trigger
+
+      - name: Verify release build
+        run: |
+          grep -q '"version": "3.0.25-gear-pictures-dev.1"' custom_components/garmin_connect/manifest.json
+          test -f custom_components/garmin_connect/gear_picture.py
+          git diff --check
+
+      - name: Commit clean release build
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "chore: finalize Gear pictures dev.1 prerelease"
+          git push origin HEAD:feature/garmin-gear
+
+      - name: Create prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create 3.0.25-gear-pictures-dev.1 \
+            --target "$(git rev-parse HEAD)" \
+            --title "Garmin Gear pictures dev.1 – in-card image management" \
+            --prerelease \
+            --notes "Adds local Garmin Gear product-picture management for Sportaffären. Admin users can upload/replace or remove JPEG, PNG and WebP images through authenticated Home Assistant WebSocket commands; filenames and /config/www/gear_pictures destination are generated server-side, with 5 MB validation and stale-extension cleanup. Garmin Fitness and ha-garmin are unchanged."
