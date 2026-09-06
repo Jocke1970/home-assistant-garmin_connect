@@ -1,0 +1,89 @@
+name: Shared card picture legacy cleanup temp
+
+on:
+  push:
+    branches:
+      - feature/shared-card-pictures
+    paths:
+      - .shared-card-picture-cleanup-trigger
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: feature/shared-card-pictures
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - name: Remove migrated Garmin Gear legacy folder handling
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          backend = Path('custom_components/garmin_connect/gear_picture.py')
+          text = backend.read_text()
+
+          legacy_dir = '''\n\ndef _legacy_gear_picture_directory(hass: HomeAssistant) -> Path:\n    \"\"\"Return the pre-migration Gear folder, used only for cleanup.\"\"\"\n    return Path(hass.config.path(\"www\", \"gear_pictures\"))\n'''
+          if text.count(legacy_dir) != 1:
+              raise SystemExit(f'expected one legacy directory helper, found {text.count(legacy_dir)}')
+          text = text.replace(legacy_dir, '', 1)
+
+          write_cleanup = '''\n    # The pre-generic Garmin Gear backend stored files directly in\n    # /config/www/gear_pictures. Once a Gear picture is replaced, remove that\n    # stale copy so it can never reappear as a frontend fallback.\n    if collection == _GARMIN_GEAR_COLLECTION:\n        await hass.async_add_executor_job(\n            remove_pictures,\n            _legacy_gear_picture_directory(hass),\n            slug,\n        )\n'''
+          if text.count(write_cleanup) != 1:
+              raise SystemExit(f'expected one upload legacy-cleanup block, found {text.count(write_cleanup)}')
+          text = text.replace(write_cleanup, '', 1)
+
+          remove_cleanup = '''\n    if collection == _GARMIN_GEAR_COLLECTION:\n        legacy_removed = await hass.async_add_executor_job(\n            remove_pictures,\n            _legacy_gear_picture_directory(hass),\n            slug,\n        )\n        removed.extend(legacy_removed)\n'''
+          if text.count(remove_cleanup) != 1:
+              raise SystemExit(f'expected one remove legacy-cleanup block, found {text.count(remove_cleanup)}')
+          text = text.replace(remove_cleanup, '', 1)
+          backend.write_text(text)
+
+          docs = Path('docs/GARMIN_GEAR.md')
+          dtext = docs.read_text()
+          old = 'The legacy Garmin Gear WebSocket command names remain as thin compatibility wrappers around the same generic implementation. The old `/config/www/gear_pictures/` directory is only used for migration/cleanup compatibility and is not a target for new uploads.'
+          new = 'The legacy Garmin Gear WebSocket command names remain as thin compatibility wrappers around the same generic implementation. Garmin Gear picture storage is now canonical under `/config/www/garmin_gear_card/pictures/`; the retired `/config/www/gear_pictures/` path is no longer read, written, or cleaned by the backend.'
+          if dtext.count(old) != 1:
+              raise SystemExit(f'expected one legacy docs paragraph, found {dtext.count(old)}')
+          docs.write_text(dtext.replace(old, new, 1))
+          PY
+
+      - name: Remove one-shot files
+        run: rm -f .github/workflows/shared-card-picture-legacy-cleanup-temp.yml .shared-card-picture-cleanup-trigger
+
+      - name: Install test and lint dependencies
+        run: python -m pip install -r requirements.txt -r requirements_lint.txt
+
+      - name: Verify no retired folder handling remains
+        shell: bash
+        run: |
+          if grep -R -n '/config/www/gear_pictures\|_legacy_gear_picture_directory\|hass.config.path("www", "gear_pictures")' custom_components/garmin_connect/gear_picture.py docs/GARMIN_GEAR.md; then
+            echo 'retired gear_pictures handling still present'
+            false
+          fi
+          git diff --check
+
+      - name: Pre-commit
+        run: pre-commit run --all-files
+
+      - name: Tests
+        run: pytest tests/test_gear_picture.py tests/test_init.py -q
+
+      - name: Commit clean backend
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "cleanup(pictures): remove migrated Gear legacy folder handling"
+          git push origin HEAD:feature/shared-card-pictures
