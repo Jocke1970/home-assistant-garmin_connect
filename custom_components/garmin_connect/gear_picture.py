@@ -1,4 +1,10 @@
-"""Local product-picture management for Garmin Gear."""
+"""Reusable local product-picture management for Home Assistant cards.
+
+The picture backend started as Garmin Gear-specific functionality.  Keep the
+legacy Garmin Gear websocket contract intact while exposing the same validated
+storage implementation through a generic collection/key API that other cards
+can reuse.
+"""
 
 from __future__ import annotations
 
@@ -16,8 +22,15 @@ from homeassistant.core import HomeAssistant, callback
 
 from .const import DOMAIN
 
+# Generic card-picture API.  The Garmin integration owns registration for now,
+# but callers are separated by collection and no Garmin-specific data is needed.
+WS_UPLOAD_CARD_PICTURE = f"{DOMAIN}/card_picture/upload"
+WS_REMOVE_CARD_PICTURE = f"{DOMAIN}/card_picture/remove"
+
+# Backwards-compatible API used by the already deployed Garmin Gear card.
 WS_UPLOAD_GEAR_PICTURE = f"{DOMAIN}/gear_picture/upload"
 WS_REMOVE_GEAR_PICTURE = f"{DOMAIN}/gear_picture/remove"
+
 MAX_PICTURE_BYTES = 5 * 1024 * 1024
 PICTURE_EXTENSIONS = ("jpeg", "jpg", "png", "webp")
 
@@ -27,15 +40,32 @@ _MIME_TO_EXTENSION = {
     "image/png": "png",
     "image/webp": "webp",
 }
-_DATA_REGISTERED = f"{DOMAIN}_gear_picture_websocket_registered"
+_COLLECTION_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_DATA_REGISTERED = f"{DOMAIN}_card_picture_websocket_registered"
 
 
-def slugify_gear_picture_name(value: str) -> str:
-    """Return the canonical local picture slug for a Gear display name."""
+def slugify_picture_name(value: str) -> str:
+    """Return a safe deterministic filename slug for a card picture key."""
     normalized = unicodedata.normalize("NFKD", value)
     ascii_value = "".join(char for char in normalized if not unicodedata.combining(char))
     slug = re.sub(r"[^a-z0-9]+", "_", ascii_value.lower()).strip("_")
     return re.sub(r"_+", "_", slug)
+
+
+# Compatibility alias for existing tests/imports and the Gear terminology.
+def slugify_gear_picture_name(value: str) -> str:
+    """Return the canonical local picture slug for a Gear display name."""
+    return slugify_picture_name(value)
+
+
+def validate_picture_collection(value: str) -> str:
+    """Validate and return a caller-owned picture collection name."""
+    collection = value.strip().lower()
+    if not _COLLECTION_RE.fullmatch(collection):
+        raise ValueError(
+            "Collection måste bestå av a-z, 0-9, bindestreck eller understreck"
+        )
+    return collection
 
 
 def _validate_picture_bytes(data: bytes, extension: str) -> None:
@@ -51,8 +81,8 @@ def _validate_picture_bytes(data: bytes, extension: str) -> None:
         raise ValueError("Bildens innehåll matchar inte filformatet")
 
 
-def decode_gear_picture(content: str, mime_type: str) -> tuple[str, bytes]:
-    """Decode and validate a base64 encoded Gear picture."""
+def decode_picture(content: str, mime_type: str) -> tuple[str, bytes]:
+    """Decode and validate a base64 encoded card picture."""
     extension = _MIME_TO_EXTENSION.get(mime_type.lower())
     if extension is None:
         raise ValueError("Endast JPEG, PNG och WebP stöds")
@@ -68,11 +98,23 @@ def decode_gear_picture(content: str, mime_type: str) -> tuple[str, bytes]:
     return extension, data
 
 
-def _picture_directory(hass: HomeAssistant) -> Path:
+# Compatibility alias for the first Gear-specific implementation.
+def decode_gear_picture(content: str, mime_type: str) -> tuple[str, bytes]:
+    """Decode and validate a base64 encoded Gear picture."""
+    return decode_picture(content, mime_type)
+
+
+def _generic_picture_directory(hass: HomeAssistant, collection: str) -> Path:
+    return Path(hass.config.path("www", "card_pictures", collection))
+
+
+def _legacy_gear_picture_directory(hass: HomeAssistant) -> Path:
+    # Do not move existing Gear images.  The working frontend probes this path,
+    # and preserving it makes the backend migration non-breaking.
     return Path(hass.config.path("www", "gear_pictures"))
 
 
-def write_gear_picture(directory: Path, slug: str, extension: str, data: bytes) -> Path:
+def write_picture(directory: Path, slug: str, extension: str, data: bytes) -> Path:
     """Write a picture atomically and remove stale extension variants."""
     directory.mkdir(parents=True, exist_ok=True)
     target = directory / f"{slug}.{extension}"
@@ -87,8 +129,14 @@ def write_gear_picture(directory: Path, slug: str, extension: str, data: bytes) 
     return target
 
 
-def remove_gear_pictures(directory: Path, slug: str) -> list[str]:
-    """Remove all supported picture variants for a Gear item."""
+# Compatibility alias.
+def write_gear_picture(directory: Path, slug: str, extension: str, data: bytes) -> Path:
+    """Write a Gear picture using the reusable writer."""
+    return write_picture(directory, slug, extension, data)
+
+
+def remove_pictures(directory: Path, slug: str) -> list[str]:
+    """Remove all supported picture variants for one key."""
     removed: list[str] = []
     for extension in PICTURE_EXTENSIONS:
         candidate = directory / f"{slug}.{extension}"
@@ -98,14 +146,147 @@ def remove_gear_pictures(directory: Path, slug: str) -> list[str]:
     return removed
 
 
+# Compatibility alias.
+def remove_gear_pictures(directory: Path, slug: str) -> list[str]:
+    """Remove all supported Gear picture variants."""
+    return remove_pictures(directory, slug)
+
+
 @callback
 def async_setup_gear_picture_websocket(hass: HomeAssistant) -> None:
-    """Register Gear picture websocket commands once per HA runtime."""
+    """Register generic and legacy picture websocket commands once."""
     if hass.data.get(_DATA_REGISTERED):
         return
+    websocket_api.async_register_command(hass, websocket_upload_card_picture)
+    websocket_api.async_register_command(hass, websocket_remove_card_picture)
     websocket_api.async_register_command(hass, websocket_upload_gear_picture)
     websocket_api.async_register_command(hass, websocket_remove_gear_picture)
     hass.data[_DATA_REGISTERED] = True
+
+
+async def _async_write_picture(
+    hass: HomeAssistant,
+    *,
+    directory: Path,
+    url_prefix: str,
+    key: str,
+    mime_type: str,
+    content: str,
+) -> dict[str, str]:
+    """Validate and persist one picture, returning its frontend metadata."""
+    slug = slugify_picture_name(key)
+    if not slug:
+        raise ValueError("Kunde inte skapa bildnamn")
+
+    extension, data = decode_picture(content, mime_type)
+    target = await hass.async_add_executor_job(
+        write_picture,
+        directory,
+        slug,
+        extension,
+        data,
+    )
+    return {
+        "slug": slug,
+        "filename": target.name,
+        "url": f"{url_prefix}/{target.name}",
+    }
+
+
+async def _async_remove_picture(
+    hass: HomeAssistant,
+    *,
+    directory: Path,
+    key: str,
+) -> tuple[str, list[str]]:
+    """Remove all picture variants for one key."""
+    slug = slugify_picture_name(key)
+    if not slug:
+        raise ValueError("Kunde inte skapa bildnamn")
+    removed = await hass.async_add_executor_job(remove_pictures, directory, slug)
+    return slug, removed
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): WS_UPLOAD_CARD_PICTURE,
+        vol.Required("collection"): str,
+        vol.Required("key"): str,
+        vol.Required("mime_type"): str,
+        vol.Required("content"): str,
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def websocket_upload_card_picture(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Upload or replace a picture in a reusable card-owned collection."""
+    try:
+        collection = validate_picture_collection(msg["collection"])
+    except ValueError as err:
+        connection.send_error(msg["id"], "invalid_collection", str(err))
+        return
+
+    try:
+        result = await _async_write_picture(
+            hass,
+            directory=_generic_picture_directory(hass, collection),
+            url_prefix=f"/local/card_pictures/{collection}",
+            key=msg["key"],
+            mime_type=msg["mime_type"],
+            content=msg["content"],
+        )
+    except ValueError as err:
+        connection.send_error(msg["id"], "invalid_picture", str(err))
+        return
+    except OSError as err:
+        connection.send_error(msg["id"], "save_failed", str(err))
+        return
+
+    connection.send_result(msg["id"], {"collection": collection, **result})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): WS_REMOVE_CARD_PICTURE,
+        vol.Required("collection"): str,
+        vol.Required("key"): str,
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def websocket_remove_card_picture(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Remove a picture from a reusable card-owned collection."""
+    try:
+        collection = validate_picture_collection(msg["collection"])
+    except ValueError as err:
+        connection.send_error(msg["id"], "invalid_collection", str(err))
+        return
+
+    try:
+        slug, removed = await _async_remove_picture(
+            hass,
+            directory=_generic_picture_directory(hass, collection),
+            key=msg["key"],
+        )
+    except ValueError as err:
+        connection.send_error(msg["id"], "invalid_picture", str(err))
+        return
+    except OSError as err:
+        connection.send_error(msg["id"], "remove_failed", str(err))
+        return
+
+    connection.send_result(
+        msg["id"],
+        {"collection": collection, "slug": slug, "removed": removed},
+    )
 
 
 @websocket_api.websocket_command(
@@ -123,38 +304,24 @@ async def websocket_upload_gear_picture(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Upload or replace a local Gear product picture."""
-    slug = slugify_gear_picture_name(msg["name"])
-    if not slug:
-        connection.send_error(msg["id"], "invalid_name", "Kunde inte skapa bildnamn")
-        return
-
+    """Upload/replace a Gear picture through the reusable picture core."""
     try:
-        extension, data = decode_gear_picture(msg["content"], msg["mime_type"])
+        result = await _async_write_picture(
+            hass,
+            directory=_legacy_gear_picture_directory(hass),
+            url_prefix="/local/gear_pictures",
+            key=msg["name"],
+            mime_type=msg["mime_type"],
+            content=msg["content"],
+        )
     except ValueError as err:
         connection.send_error(msg["id"], "invalid_picture", str(err))
         return
-
-    try:
-        target = await hass.async_add_executor_job(
-            write_gear_picture,
-            _picture_directory(hass),
-            slug,
-            extension,
-            data,
-        )
     except OSError as err:
         connection.send_error(msg["id"], "save_failed", str(err))
         return
 
-    connection.send_result(
-        msg["id"],
-        {
-            "slug": slug,
-            "filename": target.name,
-            "url": f"/local/gear_pictures/{target.name}",
-        },
-    )
+    connection.send_result(msg["id"], result)
 
 
 @websocket_api.websocket_command(
@@ -170,18 +337,16 @@ async def websocket_remove_gear_picture(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Remove local Gear product-picture variants."""
-    slug = slugify_gear_picture_name(msg["name"])
-    if not slug:
-        connection.send_error(msg["id"], "invalid_name", "Kunde inte skapa bildnamn")
-        return
-
+    """Remove local Gear picture variants through the reusable core."""
     try:
-        removed = await hass.async_add_executor_job(
-            remove_gear_pictures,
-            _picture_directory(hass),
-            slug,
+        slug, removed = await _async_remove_picture(
+            hass,
+            directory=_legacy_gear_picture_directory(hass),
+            key=msg["name"],
         )
+    except ValueError as err:
+        connection.send_error(msg["id"], "invalid_name", str(err))
+        return
     except OSError as err:
         connection.send_error(msg["id"], "remove_failed", str(err))
         return
