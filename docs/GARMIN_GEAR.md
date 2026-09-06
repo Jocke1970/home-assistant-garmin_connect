@@ -184,6 +184,44 @@ The UI should never need to display raw strings such as `type_25` when `default_
 
 For `last_activity`, a Gear item with historical usage but no cached recent activity should be presented as something like **"Latest activity not available"**, not **"No activity registered"**.
 
+## Shared card picture backend
+
+The picture upload/storage implementation remains in `custom_components/garmin_connect/gear_picture.py`. Garmin Gear introduced it first, but the implementation is now collection-based so other Home Assistant cards can reuse the same validated storage path without duplicating filesystem logic in JavaScript.
+
+Reusable WebSocket commands:
+
+```text
+garmin_connect/card_picture/upload
+garmin_connect/card_picture/remove
+```
+
+Clients provide a validated collection name and stable key. The backend maps the collection to the card-owned directory:
+
+```text
+garmin_gear        -> /config/www/garmin_gear_card/pictures/
+device_maintenance -> /config/www/device_maintenance_card/pictures/
+```
+
+The public URL uses the matching `/local/<collection>_card/pictures/` prefix.
+
+The legacy Garmin Gear WebSocket command names remain as thin compatibility wrappers around the same generic implementation. The old `/config/www/gear_pictures/` directory is only used for migration/cleanup compatibility and is not a target for new uploads.
+
+The backend preserves the original Gear validation rules:
+
+- JPEG, PNG and WebP only
+- maximum 5 MB decoded image size
+- minimal magic-byte validation
+- deterministic safe filename slugging
+- atomic temporary-file replace
+- cleanup of stale extension variants when a picture is replaced
+- admin requirement on WebSocket commands
+
+The JavaScript frontends are responsible only for file selection, transport encoding and presentation. They do not write to the Home Assistant filesystem.
+
+Browser-side image probes use a cache-busting query parameter because a browser can otherwise retain a previous 404 for a picture that did not exist before the first upload.
+
+The shared backend was live-tested on 2026-09-06 with both Garmin Gear and Device Maintenance.
+
 ## Current implementation references
 
 `ha-garmin`:
@@ -195,6 +233,8 @@ Home Assistant integration:
 
 - `custom_components/garmin_connect/coordinator.py`
 - `custom_components/garmin_connect/sensor.py`
+- `custom_components/garmin_connect/gear_picture.py`
+- `tests/test_gear_picture.py`
 
 Release line used while this work is being validated:
 
@@ -210,3 +250,4 @@ The following decisions are intentional:
 - Latest Gear use is activity-driven instead of Gear-polled.
 - Auxiliary enrichment failures must not break primary Garmin data.
 - Bootstrap/backfill is bounded; API friendliness is preferred over exhaustive historical scanning.
+- Card picture persistence is implemented once in `gear_picture.py`; custom-card JavaScript must not duplicate filesystem/storage logic.
