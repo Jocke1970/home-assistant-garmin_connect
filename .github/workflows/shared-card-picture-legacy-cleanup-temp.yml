@@ -66,10 +66,11 @@ jobs:
       - name: Verify no retired folder handling remains
         shell: bash
         run: |
-          if grep -R -n '/config/www/gear_pictures\|_legacy_gear_picture_directory\|hass.config.path("www", "gear_pictures")' custom_components/garmin_connect/gear_picture.py docs/GARMIN_GEAR.md; then
-            echo 'retired gear_pictures handling still present'
+          if grep -n '_legacy_gear_picture_directory\|hass.config.path("www", "gear_pictures")\|/config/www/gear_pictures' custom_components/garmin_connect/gear_picture.py; then
+            echo 'retired gear_pictures backend handling still present'
             false
           fi
+          grep -q 'retired `/config/www/gear_pictures/` path is no longer read, written, or cleaned by the backend' docs/GARMIN_GEAR.md
           git diff --check
 
       - name: Pre-commit
