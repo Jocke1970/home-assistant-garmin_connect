@@ -19,5 +19,5 @@
   "requirements": [
     "ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@250472613761295d53d7eeeaaa82055af745ed06"
   ],
-  "version": "3.0.24-gear-m2.0-dev.3"
+  "version": "3.0.25-gear-pictures-dev.1"
 }
