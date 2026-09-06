@@ -63,6 +63,9 @@ jobs:
       - name: Install test and lint dependencies
         run: pip install -r requirements.txt -r requirements_lint.txt
 
+      - name: Normalize touched Python imports
+        run: ruff check --select I --fix custom_components/garmin_connect/gear_picture.py
+
       - name: Verify no retired folder handling remains
         shell: bash
         run: |
