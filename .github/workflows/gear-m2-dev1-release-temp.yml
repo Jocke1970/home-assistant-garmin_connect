@@ -1,0 +1,42 @@
+name: Gear M2 dev.1 release temp
+
+on:
+  push:
+    branches:
+      - feature/garmin-gear
+    paths:
+      - .gear-m2-dev1-release
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Create prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="3.0.24-gear-m2.0-dev.1"
+          TARGET="0917c49d3b3c705978ef0dcc88c58bfaeda3d717"
+          gh release create "$TAG" \
+            --target "$TARGET" \
+            --title "Garmin Gear M2 dev.1 – Registered device battery" \
+            --notes "First Garmin Gear M2 development build. Preserves batteryLevel and batteryStatus from registered Garmin devices through ha-garmin, exposes dynamic Home Assistant battery percentage/status entities when Garmin reports them, and keeps existing ANT+/BLE accessory battery handling intact. Intended for live validation of devices such as Fenix 7 Pro, Index Sleep Monitor and Edge 1040. Garmin Fitness entity IDs and algorithms are unchanged." \
+            --prerelease
+
+      - name: Remove one-shot files and commit cleanup
+        run: |
+          rm -f .gear-m2-dev1-release .github/workflows/gear-m2-dev1-release-temp.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(gear): remove M2 dev.1 release helper"
+            git push
+          fi
