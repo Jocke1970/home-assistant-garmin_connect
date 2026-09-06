@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import fields
 from typing import Any
+from urllib.parse import quote
 
+from ha_garmin.const import GARMIN_CONNECT_API
 from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.core import HomeAssistant
 
@@ -45,6 +47,16 @@ _DEVICE_SETTINGS_INTERESTING_TERMS = (
     "charge",
     "remaining",
     "percent",
+)
+_DEVICE_STATUS_INTERESTING_TERMS = (
+    "battery",
+    "charge",
+    "remaining",
+    "percent",
+    "sync",
+    "status",
+    "connected",
+    "upload",
 )
 
 
@@ -113,6 +125,108 @@ def _collect_interesting_settings_fields(
     return matches
 
 
+def _collect_interesting_status_fields(
+    value: Any, path: tuple[str, ...] = ()
+) -> list[dict[str, Any]]:
+    """Collect battery/status/sync-like scalar fields from a nested payload."""
+    matches: list[dict[str, Any]] = []
+
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_path = (*path, str(key))
+            matches.extend(_collect_interesting_status_fields(child, child_path))
+        return matches
+
+    if isinstance(value, list):
+        for index, child in enumerate(value):
+            matches.extend(
+                _collect_interesting_status_fields(child, (*path, f"[{index}]"))
+            )
+        return matches
+
+    dotted_path = ".".join(path)
+    lowered_path = dotted_path.lower()
+    if any(term in lowered_path for term in _DEVICE_STATUS_INTERESTING_TERMS):
+        matches.append({"path": dotted_path, "value": value})
+    return matches
+
+
+def _summarize_status_payload(value: Any) -> dict[str, Any]:
+    """Summarize a discovery payload without dumping unrelated device data."""
+    if isinstance(value, dict):
+        return {
+            "response_type": "dict",
+            "top_level_keys": list(value.keys()),
+            "interesting_fields": _collect_interesting_status_fields(value),
+        }
+    if isinstance(value, list):
+        return {
+            "response_type": "list",
+            "item_count": len(value),
+            "interesting_fields": _collect_interesting_status_fields(value),
+        }
+    return {
+        "response_type": type(value).__name__,
+        "interesting_fields": [],
+    }
+
+
+async def _device_status_probe(client: Any, devices: Any) -> dict[str, Any]:
+    """Probe candidate Garmin device status/sync endpoints for battery discovery."""
+
+    async def _call_url(url: str) -> dict[str, Any]:
+        try:
+            payload = await client._request("GET", url)
+        except Exception as err:  # Diagnostics must survive experimental endpoints.
+            return {"error": type(err).__name__, "message": str(err)}
+        return _summarize_status_payload(payload)
+
+    per_device: list[dict[str, Any]] = []
+    if isinstance(devices, list):
+        for device in devices:
+            if not isinstance(device, dict) or not _is_device_settings_target(device):
+                continue
+
+            entry: dict[str, Any] = {"name": _device_probe_name(device)}
+            device_id = device.get("deviceId")
+            if isinstance(device_id, bool) or not isinstance(device_id, int):
+                entry["device_info"] = {"error": "missing_device_id"}
+            else:
+                url = (
+                    f"{GARMIN_CONNECT_API}/device-service/deviceservice/"
+                    f"device-info/{device_id}"
+                )
+                entry["device_info"] = await _call_url(url)
+            per_device.append(entry)
+
+    primary_url = (
+        f"{GARMIN_CONNECT_API}/web-gateway/device-info/primary-training-device"
+    )
+    primary_training_device = await _call_url(primary_url)
+
+    active_device: dict[str, Any]
+    try:
+        profile = await client.get_user_profile()
+        display_name = getattr(profile, "display_name", None)
+    except Exception as err:  # Keep diagnostics useful if profile lookup fails.
+        active_device = {"error": type(err).__name__, "message": str(err)}
+    else:
+        if display_name:
+            active_url = (
+                f"{GARMIN_CONNECT_API}/device-service/deviceservice/device-info/active/"
+                f"{quote(str(display_name), safe='')}"
+            )
+            active_device = await _call_url(active_url)
+        else:
+            active_device = {"error": "missing_display_name"}
+
+    return {
+        "per_device": per_device,
+        "primary_training_device": primary_training_device,
+        "active_device": active_device,
+    }
+
+
 async def _device_settings_probe(
     client: Any, devices: Any
 ) -> list[dict[str, Any]]:
@@ -170,12 +284,14 @@ async def _device_battery_probe(client: Any) -> dict[str, Any]:
     sensors = await _call(client.get_sensors)
     last_used = await _call(client.get_device_last_used)
     device_settings = await _device_settings_probe(client, devices)
+    device_status = await _device_status_probe(client, devices)
 
     results = {
         "devices": devices,
         "sensors": sensors,
         "last_used": last_used,
         "device_settings": device_settings,
+        "device_status": device_status,
     }
 
     return async_redact_data(results, DEVICE_PROBE_REDACT)

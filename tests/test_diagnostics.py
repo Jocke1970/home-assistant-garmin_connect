@@ -5,7 +5,9 @@ from unittest.mock import MagicMock
 from custom_components.garmin_connect.diagnostics import (
     TO_REDACT,
     _collect_interesting_settings_fields,
+    _collect_interesting_status_fields,
     _is_device_settings_target,
+    _summarize_status_payload,
     async_get_config_entry_diagnostics,
 )
 
@@ -144,6 +146,40 @@ def test_collect_interesting_settings_fields() -> None:
         {"path": "deviceInfo.battery.percentage", "value": 82},
         {"path": "deviceInfo.battery.status", "value": "GOOD"},
         {"path": "chargeRemaining", "value": 1440},
+    ]
+
+
+def test_collect_interesting_status_fields() -> None:
+    """Test status probe extraction keeps discovery signals and drops noise."""
+    payload = {
+        "device": {
+            "batteryPercentage": 68,
+            "syncStatus": "SYNCED",
+            "lastConnected": "2026-09-06T10:00:00Z",
+            "serialNumber": "SECRET",
+        },
+        "lastUploadTime": 1234567890,
+        "nickname": "Watch",
+    }
+
+    assert _collect_interesting_status_fields(payload) == [
+        {"path": "device.batteryPercentage", "value": 68},
+        {"path": "device.syncStatus", "value": "SYNCED"},
+        {"path": "device.lastConnected", "value": "2026-09-06T10:00:00Z"},
+        {"path": "lastUploadTime", "value": 1234567890},
+    ]
+
+
+def test_summarize_status_payload() -> None:
+    """Test diagnostics summary avoids dumping unrelated device payload fields."""
+    summary = _summarize_status_payload(
+        {"batteryLevel": 74, "deviceId": 123, "firmware": "26.09"}
+    )
+
+    assert summary["response_type"] == "dict"
+    assert summary["top_level_keys"] == ["batteryLevel", "deviceId", "firmware"]
+    assert summary["interesting_fields"] == [
+        {"path": "batteryLevel", "value": 74}
     ]
 
 
