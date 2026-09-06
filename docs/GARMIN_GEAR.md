@@ -204,7 +204,7 @@ device_maintenance -> /config/www/device_maintenance_card/pictures/
 
 The public URL uses the matching `/local/<collection>_card/pictures/` prefix.
 
-The legacy Garmin Gear WebSocket command names remain as thin compatibility wrappers around the same generic implementation. Garmin Gear picture storage is now canonical under `/config/www/garmin_gear_card/pictures/`; the retired `/config/www/gear_pictures/` path is no longer read, written, or cleaned by the backend.
+The legacy Garmin Gear WebSocket command names remain as thin compatibility wrappers around the same generic implementation. Garmin Gear picture storage is now canonical under `/config/www/garmin_gear_card/pictures/`; the retired `/config/www/gear_pictures/` path is no longer read, written, or cleaned by the backend. After live verification of `0.3.0-dev.14`, the old local `/config/www/gear_pictures/` directory was removed from Home Assistant as well.
 
 The backend preserves the original Gear validation rules:
 
