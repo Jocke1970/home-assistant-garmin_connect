@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any
 
 import voluptuous as vol
-
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 
@@ -87,11 +86,6 @@ def _picture_directory(hass: HomeAssistant, collection: str) -> Path:
             "pictures",
         )
     )
-
-
-def _legacy_gear_picture_directory(hass: HomeAssistant) -> Path:
-    """Return the pre-migration Gear folder, used only for cleanup."""
-    return Path(hass.config.path("www", "gear_pictures"))
 
 
 def _validate_picture_bytes(data: bytes, extension: str) -> None:
@@ -191,16 +185,6 @@ async def _async_write_picture(
         data,
     )
 
-    # The pre-generic Garmin Gear backend stored files directly in
-    # /config/www/gear_pictures. Once a Gear picture is replaced, remove that
-    # stale copy so it can never reappear as a frontend fallback.
-    if collection == _GARMIN_GEAR_COLLECTION:
-        await hass.async_add_executor_job(
-            remove_pictures,
-            _legacy_gear_picture_directory(hass),
-            slug,
-        )
-
     return {
         "collection": collection,
         "slug": slug,
@@ -226,13 +210,6 @@ async def _async_remove_picture(
         _picture_directory(hass, collection),
         slug,
     )
-    if collection == _GARMIN_GEAR_COLLECTION:
-        legacy_removed = await hass.async_add_executor_job(
-            remove_pictures,
-            _legacy_gear_picture_directory(hass),
-            slug,
-        )
-        removed.extend(legacy_removed)
     return slug, removed
 
 

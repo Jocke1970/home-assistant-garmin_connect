@@ -204,7 +204,7 @@ device_maintenance -> /config/www/device_maintenance_card/pictures/
 
 The public URL uses the matching `/local/<collection>_card/pictures/` prefix.
 
-The legacy Garmin Gear WebSocket command names remain as thin compatibility wrappers around the same generic implementation. The old `/config/www/gear_pictures/` directory is only used for migration/cleanup compatibility and is not a target for new uploads.
+The legacy Garmin Gear WebSocket command names remain as thin compatibility wrappers around the same generic implementation. Garmin Gear picture storage is now canonical under `/config/www/garmin_gear_card/pictures/`; the retired `/config/www/gear_pictures/` path is no longer read, written, or cleaned by the backend.
 
 The backend preserves the original Gear validation rules:
 
