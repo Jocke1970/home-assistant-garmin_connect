@@ -1763,6 +1763,19 @@ def _accessory_identity(sensor: dict[str, Any]) -> str:
     return hashlib.sha256(basis.encode()).hexdigest()[:16]
 
 
+def _registered_device_identity(device: dict[str, Any]) -> str:
+    """Return a stable, non-reversible identity for a registered Garmin device."""
+    device_id = device.get("deviceId")
+    unit_id = device.get("unitId")
+    basis_value = device_id if device_id not in (None, "") else unit_id
+    if basis_value in (None, ""):
+        basis_value = "|".join(
+            str(device.get(key) or "")
+            for key in ("applicationKey", "productSku", "displayName")
+        )
+    return hashlib.sha256(f"device:{basis_value}".encode()).hexdigest()[:16]
+
+
 def _clean_gear_text(value: Any) -> str | None:
     """Return useful Gear branding text while dropping Garmin placeholders."""
     text = str(value or "").strip()
@@ -1847,6 +1860,7 @@ async def async_setup_entry(
     entities: list[
         GarminConnectSensor
         | GarminConnectGearSensor
+        | GarminConnectDeviceBatterySensor
         | GarminConnectAccessoryBatterySensor
         | GarminConnectPowerToWeightSensor
     ] = []
@@ -1881,6 +1895,42 @@ async def async_setup_entry(
                     entry_id=entry.entry_id,
                 )
             )
+
+    # Dynamic registered Garmin-device battery entities. Garmin's device endpoint
+    # may provide a numeric percentage, a qualitative status, or both.
+    known_device_battery_entities: set[tuple[str, str]] = set()
+
+    def _collect_new_device_battery_entities() -> list[GarminConnectDeviceBatterySensor]:
+        if not coordinators.gear.data:
+            return []
+        new_entities: list[GarminConnectDeviceBatterySensor] = []
+        for device in coordinators.gear.data.get("devices", []):
+            if not isinstance(device, dict):
+                continue
+            device_key = _registered_device_identity(device)
+            battery_level = device.get("batteryLevel")
+            battery_status = device.get("batteryStatus")
+            kinds: list[str] = []
+            if isinstance(battery_level, int | float) and not isinstance(battery_level, bool):
+                kinds.append("level")
+            if isinstance(battery_status, str) and battery_status:
+                kinds.append("status")
+            for kind in kinds:
+                token = (device_key, kind)
+                if token in known_device_battery_entities:
+                    continue
+                known_device_battery_entities.add(token)
+                new_entities.append(
+                    GarminConnectDeviceBatterySensor(
+                        coordinators.gear,
+                        device_key=device_key,
+                        kind=kind,
+                        entry_id=entry.entry_id,
+                    )
+                )
+        return new_entities
+
+    entities.extend(_collect_new_device_battery_entities())
 
     # Dynamic ANT+/BLE accessory battery entities. Battery percentage and
     # qualitative battery status are separate entities because Garmin may provide
@@ -1943,6 +1993,17 @@ async def async_setup_entry(
             async_add_entities(new_entities)
 
     entry.async_on_unload(coordinators.gear.async_add_listener(_async_add_new_gear))
+
+    @callback
+    def _async_add_new_registered_device_battery() -> None:
+        """Add battery entities when Garmin starts reporting a device value."""
+        new_entities = _collect_new_device_battery_entities()
+        if new_entities:
+            async_add_entities(new_entities)
+
+    entry.async_on_unload(
+        coordinators.gear.async_add_listener(_async_add_new_registered_device_battery)
+    )
 
     @callback
     def _async_add_new_accessory_battery() -> None:
@@ -2028,6 +2089,97 @@ class GarminConnectSensor(CoordinatorEntity[BaseGarminCoordinator], SensorEntity
         if not self.coordinator.data or self.entity_description.attributes_fn is None:
             return {}
         return self.entity_description.attributes_fn(self.coordinator.data)
+
+
+class GarminConnectDeviceBatterySensor(CoordinatorEntity[GearCoordinator], SensorEntity):
+    """Battery percentage or status for a registered Garmin device."""
+
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: GearCoordinator,
+        device_key: str,
+        kind: str,
+        entry_id: str,
+    ) -> None:
+        """Initialize a registered-device battery entity."""
+        super().__init__(coordinator)
+        self._device_key = device_key
+        self._kind = kind
+        self._attr_unique_id = f"{entry_id}_device_{device_key}_battery_{kind}"
+        self._attr_name = "Battery" if kind == "level" else "Battery status"
+
+        if kind == "level":
+            self._attr_native_unit_of_measurement = PERCENTAGE
+            self._attr_device_class = SensorDeviceClass.BATTERY
+            self._attr_state_class = SensorStateClass.MEASUREMENT
+            self._attr_suggested_display_precision = 0
+
+        device = self._get_device() or {}
+        display_name = str(
+            device.get("productDisplayName") or device.get("displayName") or "Garmin device"
+        ).strip()
+        model = str(
+            device.get("productDisplayName") or device.get("deviceTypeName") or ""
+        ).strip()
+        device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"registered_device_{device_key}")},
+            name=display_name or "Garmin device",
+            manufacturer="Garmin",
+        )
+        if model:
+            device_info["model"] = model
+        firmware = device.get("currentFirmwareVersion")
+        if firmware not in (None, ""):
+            device_info["sw_version"] = str(firmware)
+        self._attr_device_info = device_info
+
+    def _get_device(self) -> dict[str, Any] | None:
+        """Return the current Garmin registered-device record for this key."""
+        if not self.coordinator.data:
+            return None
+        for device in self.coordinator.data.get("devices", []):
+            if (
+                isinstance(device, dict)
+                and _registered_device_identity(device) == self._device_key
+            ):
+                return device
+        return None
+
+    @property
+    def native_value(self) -> str | int | float | None:
+        """Return battery percentage or Garmin's qualitative battery status."""
+        device = self._get_device()
+        if device is None:
+            return None
+        if self._kind == "level":
+            value = device.get("batteryLevel")
+            if isinstance(value, int | float) and not isinstance(value, bool):
+                return value
+            return None
+        value = device.get("batteryStatus")
+        return value if isinstance(value, str) and value else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return useful registered-device metadata without serial numbers."""
+        device = self._get_device()
+        if device is None:
+            return {}
+        return {
+            key: value
+            for key, value in {
+                "battery_level": device.get("batteryLevel"),
+                "battery_status": device.get("batteryStatus"),
+                "device_status": device.get("deviceStatus"),
+                "firmware": device.get("currentFirmwareVersion"),
+                "application_key": device.get("applicationKey"),
+                "product_sku": device.get("productSku"),
+            }.items()
+            if value is not None
+        }
 
 
 class GarminConnectAccessoryBatterySensor(CoordinatorEntity[GearCoordinator], SensorEntity):

@@ -18,11 +18,13 @@ from custom_components.garmin_connect.sensor import (
     TRAINING_SENSORS,
     CoordinatorType,
     GarminConnectAccessoryBatterySensor,
+    GarminConnectDeviceBatterySensor,
     GarminConnectGearSensor,
     GarminConnectSensor,
     GarminConnectSensorEntityDescription,
     _accessory_identity,
     _match_accessory_gear,
+    _registered_device_identity,
 )
 
 from .conftest import (
@@ -768,6 +770,54 @@ def test_menstrual_cycle_phase_attributes_are_populated() -> None:
     assert attrs["length_of_current_phase"] == 12
     assert attrs["predicted_cycle_length"] == 28
     assert attrs["cycle_type"] == "REGULAR"
+
+
+# ── GarminConnectDeviceBatterySensor ─────────────────────────────────────────
+
+
+def _registered_device_battery_data() -> dict:
+    return {
+        "devices": [
+            {
+                "deviceId": 12345,
+                "displayName": "fenix 7 Pro Sapphire Solar",
+                "productDisplayName": "fenix 7 Pro Sapphire Solar",
+                "batteryLevel": 64,
+                "batteryStatus": "GOOD",
+                "deviceStatus": "ACTIVE",
+                "currentFirmwareVersion": "25.12",
+                "applicationKey": "fenix7pro",
+            }
+        ]
+    }
+
+
+def test_registered_device_battery_level_entity() -> None:
+    coord = MagicMock()
+    coord.data = _registered_device_battery_data()
+    key = _registered_device_identity(coord.data["devices"][0])
+    sensor = GarminConnectDeviceBatterySensor(
+        coord, device_key=key, kind="level", entry_id="eid"
+    )
+
+    assert sensor.native_value == 64
+    assert sensor.native_unit_of_measurement == "%"
+    assert sensor.device_class == SensorDeviceClass.BATTERY
+    assert sensor.extra_state_attributes["battery_status"] == "GOOD"
+
+
+def test_registered_device_battery_status_entity() -> None:
+    coord = MagicMock()
+    coord.data = _registered_device_battery_data()
+    key = _registered_device_identity(coord.data["devices"][0])
+    sensor = GarminConnectDeviceBatterySensor(
+        coord, device_key=key, kind="status", entry_id="eid"
+    )
+
+    assert sensor.native_value == "GOOD"
+    assert sensor.native_unit_of_measurement is None
+    assert sensor._attr_device_info["name"] == "fenix 7 Pro Sapphire Solar"
+    assert sensor._attr_device_info["sw_version"] == "25.12"
 
 
 # ── GarminConnectAccessoryBatterySensor ──────────────────────────────────────

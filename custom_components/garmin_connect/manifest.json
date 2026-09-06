@@ -17,7 +17,7 @@
   ],
   "quality_scale": "gold",
   "requirements": [
-    "ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@b06ffad8bb4a4e785b0b1d057b9d7df00b84d033"
+    "ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@250472613761295d53d7eeeaaa82055af745ed06"
   ],
-  "version": "3.0.23-gear-m1.1"
+  "version": "3.0.24-gear-m2.0-dev.1"
 }
