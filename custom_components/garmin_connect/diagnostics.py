@@ -34,6 +34,19 @@ DEVICE_PROBE_REDACT = {
     "registrationId",
 }
 
+_DEVICE_SETTINGS_TARGETS = (
+    "edge 1040",
+    "fenix 7",
+    "fēnix 7",
+    "index sleep",
+)
+_DEVICE_SETTINGS_INTERESTING_TERMS = (
+    "battery",
+    "charge",
+    "remaining",
+    "percent",
+)
+
 
 def _gear_probe_data(data: dict[str, Any]) -> dict[str, Any]:
     """Return raw Gear payloads for diagnostics, with account identifiers redacted.
@@ -55,27 +68,115 @@ def _gear_probe_data(data: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def _device_probe_name(device: dict[str, Any]) -> str:
+    """Return a useful non-sensitive product name for a registered device."""
+    return str(
+        device.get("productDisplayName")
+        or device.get("deviceTypeSimpleName")
+        or device.get("displayName")
+        or "Garmin device"
+    ).strip()
+
+
+def _is_device_settings_target(device: dict[str, Any]) -> bool:
+    """Return whether a device is one of the current battery-discovery targets."""
+    haystack = " ".join(
+        str(device.get(key) or "")
+        for key in ("productDisplayName", "deviceTypeSimpleName", "displayName")
+    ).lower()
+    return any(target in haystack for target in _DEVICE_SETTINGS_TARGETS)
+
+
+def _collect_interesting_settings_fields(
+    value: Any, path: tuple[str, ...] = ()
+) -> list[dict[str, Any]]:
+    """Collect battery/charge-like scalar fields from a nested settings payload."""
+    matches: list[dict[str, Any]] = []
+
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_path = (*path, str(key))
+            matches.extend(_collect_interesting_settings_fields(child, child_path))
+        return matches
+
+    if isinstance(value, list):
+        for index, child in enumerate(value):
+            matches.extend(
+                _collect_interesting_settings_fields(child, (*path, f"[{index}]"))
+            )
+        return matches
+
+    dotted_path = ".".join(path)
+    lowered_path = dotted_path.lower()
+    if any(term in lowered_path for term in _DEVICE_SETTINGS_INTERESTING_TERMS):
+        matches.append({"path": dotted_path, "value": value})
+    return matches
+
+
+async def _device_settings_probe(
+    client: Any, devices: Any
+) -> list[dict[str, Any]]:
+    """Probe settings for selected Garmin devices without exposing device identifiers."""
+    if not isinstance(devices, list):
+        return []
+
+    results: list[dict[str, Any]] = []
+    for device in devices:
+        if not isinstance(device, dict) or not _is_device_settings_target(device):
+            continue
+
+        entry: dict[str, Any] = {"name": _device_probe_name(device)}
+        device_id = device.get("deviceId")
+        if isinstance(device_id, bool) or not isinstance(device_id, int):
+            entry["error"] = "missing_device_id"
+            results.append(entry)
+            continue
+
+        try:
+            settings = await client.get_device_settings(device_id)
+        except Exception as err:  # Diagnostics must survive a single probe failure.
+            entry["error"] = type(err).__name__
+            results.append(entry)
+            continue
+
+        if not isinstance(settings, dict):
+            entry["settings_type"] = type(settings).__name__
+            entry["interesting_fields"] = []
+            results.append(entry)
+            continue
+
+        entry["top_level_keys"] = list(settings.keys())
+        entry["interesting_fields"] = _collect_interesting_settings_fields(settings)
+        results.append(entry)
+
+    return results
+
+
 async def _device_battery_probe(client: Any) -> dict[str, Any]:
-    """Fetch raw authenticated device/sensor payloads only when diagnostics are requested.
+    """Fetch raw authenticated device/sensor payloads only for diagnostics.
 
     These endpoints are intentionally not added to normal polling yet. The probe
     lets us inspect Garmin's current battery schema for registered devices and
     paired ANT+/BLE sensors without polluting Recorder or guessing field names.
     """
 
-    async def _call(name: str, method: Any) -> tuple[str, Any]:
+    async def _call(method: Any) -> Any:
         try:
-            return name, await method()
+            return await method()
         except Exception as err:  # Diagnostics must remain available if one probe fails.
-            return name, {"error": type(err).__name__, "message": str(err)}
+            return {"error": type(err).__name__, "message": str(err)}
 
-    results = dict(
-        [
-            await _call("devices", client.get_devices),
-            await _call("sensors", client.get_sensors),
-            await _call("last_used", client.get_device_last_used),
-        ]
-    )
+    devices = await _call(client.get_devices)
+    sensors = await _call(client.get_sensors)
+    last_used = await _call(client.get_device_last_used)
+    device_settings = await _device_settings_probe(client, devices)
+
+    results = {
+        "devices": devices,
+        "sensors": sensors,
+        "last_used": last_used,
+        "device_settings": device_settings,
+    }
 
     return async_redact_data(results, DEVICE_PROBE_REDACT)
 
