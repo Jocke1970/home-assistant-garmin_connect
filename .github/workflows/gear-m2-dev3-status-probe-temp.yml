@@ -1,0 +1,113 @@
+name: Gear M2 dev.3 status probe temp
+
+on:
+  push:
+    branches:
+      - feature/garmin-gear
+    paths:
+      - .gear-m2-dev3-status-probe
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: feature/garmin-gear
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Patch diagnostics-only status/sync probe
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          diagnostics = Path("custom_components/garmin_connect/diagnostics.py")
+          text = diagnostics.read_text(encoding="utf-8")
+
+          old = '''from dataclasses import fields\nfrom typing import Any\n\nfrom homeassistant.components.diagnostics import async_redact_data\n'''
+          new = '''from dataclasses import fields\nfrom typing import Any\nfrom urllib.parse import quote\n\nfrom ha_garmin.const import GARMIN_CONNECT_API\nfrom homeassistant.components.diagnostics import async_redact_data\n'''
+          assert old in text, "diagnostics import anchor not found"
+          text = text.replace(old, new, 1)
+
+          old = '''_DEVICE_SETTINGS_INTERESTING_TERMS = (\n    "battery",\n    "charge",\n    "remaining",\n    "percent",\n)\n'''
+          new = '''_DEVICE_SETTINGS_INTERESTING_TERMS = (\n    "battery",\n    "charge",\n    "remaining",\n    "percent",\n)\n_DEVICE_STATUS_INTERESTING_TERMS = (\n    "battery",\n    "charge",\n    "remaining",\n    "percent",\n    "sync",\n    "status",\n    "connected",\n    "upload",\n)\n'''
+          assert old in text, "diagnostics terms anchor not found"
+          text = text.replace(old, new, 1)
+
+          anchor = '''\n\nasync def _device_settings_probe(\n    client: Any, devices: Any\n) -> list[dict[str, Any]]:\n'''
+          addition = '''\n\ndef _collect_interesting_status_fields(\n    value: Any, path: tuple[str, ...] = ()\n) -> list[dict[str, Any]]:\n    """Collect battery/status/sync-like scalar fields from a nested payload."""\n    matches: list[dict[str, Any]] = []\n\n    if isinstance(value, dict):\n        for key, child in value.items():\n            child_path = (*path, str(key))\n            matches.extend(_collect_interesting_status_fields(child, child_path))\n        return matches\n\n    if isinstance(value, list):\n        for index, child in enumerate(value):\n            matches.extend(\n                _collect_interesting_status_fields(child, (*path, f"[{index}]"))\n            )\n        return matches\n\n    dotted_path = ".".join(path)\n    lowered_path = dotted_path.lower()\n    if any(term in lowered_path for term in _DEVICE_STATUS_INTERESTING_TERMS):\n        matches.append({"path": dotted_path, "value": value})\n    return matches\n\n\ndef _summarize_status_payload(value: Any) -> dict[str, Any]:\n    """Summarize a discovery payload without dumping unrelated device data."""\n    if isinstance(value, dict):\n        return {\n            "response_type": "dict",\n            "top_level_keys": list(value.keys()),\n            "interesting_fields": _collect_interesting_status_fields(value),\n        }\n    if isinstance(value, list):\n        return {\n            "response_type": "list",\n            "item_count": len(value),\n            "interesting_fields": _collect_interesting_status_fields(value),\n        }\n    return {\n        "response_type": type(value).__name__,\n        "interesting_fields": [],\n    }\n\n\nasync def _device_status_probe(client: Any, devices: Any) -> dict[str, Any]:\n    """Probe candidate Garmin device status/sync endpoints for battery discovery."""\n\n    async def _call_url(url: str) -> dict[str, Any]:\n        try:\n            payload = await client._request("GET", url)\n        except Exception as err:  # Diagnostics must survive experimental endpoints.\n            return {"error": type(err).__name__, "message": str(err)}\n        return _summarize_status_payload(payload)\n\n    per_device: list[dict[str, Any]] = []\n    if isinstance(devices, list):\n        for device in devices:\n            if not isinstance(device, dict) or not _is_device_settings_target(device):\n                continue\n\n            entry: dict[str, Any] = {"name": _device_probe_name(device)}\n            device_id = device.get("deviceId")\n            if isinstance(device_id, bool) or not isinstance(device_id, int):\n                entry["device_info"] = {"error": "missing_device_id"}\n            else:\n                url = (\n                    f"{GARMIN_CONNECT_API}/device-service/deviceservice/"\n                    f"device-info/{device_id}"\n                )\n                entry["device_info"] = await _call_url(url)\n            per_device.append(entry)\n\n    primary_url = (\n        f"{GARMIN_CONNECT_API}/web-gateway/device-info/primary-training-device"\n    )\n    primary_training_device = await _call_url(primary_url)\n\n    active_device: dict[str, Any]\n    try:\n        profile = await client.get_user_profile()\n        display_name = getattr(profile, "display_name", None)\n    except Exception as err:  # Keep diagnostics useful if profile lookup fails.\n        active_device = {"error": type(err).__name__, "message": str(err)}\n    else:\n        if display_name:\n            active_url = (\n                f"{GARMIN_CONNECT_API}/device-service/deviceservice/device-info/active/"\n                f"{quote(str(display_name), safe='')}"\n            )\n            active_device = await _call_url(active_url)\n        else:\n            active_device = {"error": "missing_display_name"}\n\n    return {\n        "per_device": per_device,\n        "primary_training_device": primary_training_device,\n        "active_device": active_device,\n    }\n\n\nasync def _device_settings_probe(\n    client: Any, devices: Any\n) -> list[dict[str, Any]]:\n'''
+          assert anchor in text, "device settings probe anchor not found"
+          text = text.replace(anchor, addition, 1)
+
+          old = '''    device_settings = await _device_settings_probe(client, devices)\n\n    results = {\n        "devices": devices,\n        "sensors": sensors,\n        "last_used": last_used,\n        "device_settings": device_settings,\n    }\n'''
+          new = '''    device_settings = await _device_settings_probe(client, devices)\n    device_status = await _device_status_probe(client, devices)\n\n    results = {\n        "devices": devices,\n        "sensors": sensors,\n        "last_used": last_used,\n        "device_settings": device_settings,\n        "device_status": device_status,\n    }\n'''
+          assert old in text, "device battery results anchor not found"
+          text = text.replace(old, new, 1)
+          diagnostics.write_text(text, encoding="utf-8")
+
+          tests = Path("tests/test_diagnostics.py")
+          text = tests.read_text(encoding="utf-8")
+          old = '''    TO_REDACT,\n    _collect_interesting_settings_fields,\n    _is_device_settings_target,\n    async_get_config_entry_diagnostics,\n)\n'''
+          new = '''    TO_REDACT,\n    _collect_interesting_settings_fields,\n    _collect_interesting_status_fields,\n    _is_device_settings_target,\n    _summarize_status_payload,\n    async_get_config_entry_diagnostics,\n)\n'''
+          assert old in text, "test import anchor not found"
+          text = text.replace(old, new, 1)
+
+          anchor = '''\n\ndef test_to_redact_contains_expected_keys() -> None:\n'''
+          addition = '''\n\ndef test_collect_interesting_status_fields() -> None:\n    """Test status probe extraction keeps discovery signals and drops noise."""\n    payload = {\n        "device": {\n            "batteryPercentage": 68,\n            "syncStatus": "SYNCED",\n            "lastConnected": "2026-09-06T10:00:00Z",\n            "serialNumber": "SECRET",\n        },\n        "lastUploadTime": 1234567890,\n        "nickname": "Watch",\n    }\n\n    assert _collect_interesting_status_fields(payload) == [\n        {"path": "device.batteryPercentage", "value": 68},\n        {"path": "device.syncStatus", "value": "SYNCED"},\n        {"path": "device.lastConnected", "value": "2026-09-06T10:00:00Z"},\n        {"path": "lastUploadTime", "value": 1234567890},\n    ]\n\n\ndef test_summarize_status_payload() -> None:\n    """Test diagnostics summary avoids dumping unrelated device payload fields."""\n    summary = _summarize_status_payload(\n        {"batteryLevel": 74, "deviceId": 123, "firmware": "26.09"}\n    )\n\n    assert summary["response_type"] == "dict"\n    assert summary["top_level_keys"] == ["batteryLevel", "deviceId", "firmware"]\n    assert summary["interesting_fields"] == [\n        {"path": "batteryLevel", "value": 74}\n    ]\n\n\ndef test_to_redact_contains_expected_keys() -> None:\n'''
+          assert anchor in text, "test insertion anchor not found"
+          text = text.replace(anchor, addition, 1)
+          tests.write_text(text, encoding="utf-8")
+
+          manifest = Path("custom_components/garmin_connect/manifest.json")
+          text = manifest.read_text(encoding="utf-8")
+          old = '"version": "3.0.24-gear-m2.0-dev.2"'
+          new = '"version": "3.0.24-gear-m2.0-dev.3"'
+          assert old in text, "manifest version anchor not found"
+          manifest.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
+
+      - name: Remove one-shot files before verification
+        run: |
+          rm -f .gear-m2-dev3-status-probe
+          rm -f .github/workflows/gear-m2-dev3-status-probe-temp.yml
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements_lint.txt
+
+      - name: Pre-commit
+        run: pre-commit run --all-files --hook-stage manual --config .github/pre-commit-config.yaml
+
+      - name: Tests
+        run: pytest tests/ -q
+
+      - name: Commit clean dev.3 build
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "feat(gear): probe device status endpoints for battery data"
+          git push origin HEAD:feature/garmin-gear
+
+      - name: Create dev.3 prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release create "3.0.24-gear-m2.0-dev.3" \
+            --repo "Jocke1970/home-assistant-garmin_connect" \
+            --target "$(git rev-parse HEAD)" \
+            --title "Garmin Gear M2 dev.3 – Device status/sync battery probe" \
+            --notes "Third Garmin Gear M2 development build. Adds diagnostics-only probes for per-device device-info, primary-training-device, and legacy active-device status endpoints. The probe records only top-level keys and battery/charge/remaining/percent/sync/status/connected/upload-like scalar fields. No normal polling or new entities are added. Existing Gear, registered-device, ANT+/BLE sensor, and Garmin Fitness behavior is unchanged." \
+            --prerelease
