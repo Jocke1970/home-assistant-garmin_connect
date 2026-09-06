@@ -45,7 +45,7 @@ jobs:
           remove_cleanup = '''\n    if collection == _GARMIN_GEAR_COLLECTION:\n        legacy_removed = await hass.async_add_executor_job(\n            remove_pictures,\n            _legacy_gear_picture_directory(hass),\n            slug,\n        )\n        removed.extend(legacy_removed)\n'''
           if text.count(remove_cleanup) != 1:
               raise SystemExit(f'expected one remove legacy-cleanup block, found {text.count(remove_cleanup)}')
-          text = text.replace(remove_cleanup, '', 1)
+          text = text.replace(remove_cleanup, '\n', 1)
           backend.write_text(text)
 
           docs = Path('docs/GARMIN_GEAR.md')
