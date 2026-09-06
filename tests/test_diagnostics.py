@@ -4,6 +4,8 @@ from unittest.mock import MagicMock
 
 from custom_components.garmin_connect.diagnostics import (
     TO_REDACT,
+    _collect_interesting_settings_fields,
+    _is_device_settings_target,
     async_get_config_entry_diagnostics,
 )
 
@@ -111,6 +113,38 @@ async def test_diagnostics_handles_none_update_interval() -> None:
         result = await async_get_config_entry_diagnostics(mock_hass, mock_entry)
 
     assert result["coordinators"]["core"]["update_interval_seconds"] is None
+
+
+def test_device_settings_target_matching() -> None:
+    """Test that only the current battery-discovery products are selected."""
+    assert _is_device_settings_target({"productDisplayName": "Edge 1040"}) is True
+    assert (
+        _is_device_settings_target({"productDisplayName": "fenix 7 Pro Sapphire Solar"})
+        is True
+    )
+    assert (
+        _is_device_settings_target({"productDisplayName": "Index Sleep Monitor"})
+        is True
+    )
+    assert _is_device_settings_target({"productDisplayName": "Edge 130"}) is False
+
+
+def test_collect_interesting_settings_fields() -> None:
+    """Test recursive extraction of battery-like settings without unrelated fields."""
+    payload = {
+        "deviceInfo": {
+            "battery": {"percentage": 82, "status": "GOOD"},
+            "volume": {"level": 3},
+        },
+        "chargeRemaining": 1440,
+        "nickname": "Watch",
+    }
+
+    assert _collect_interesting_settings_fields(payload) == [
+        {"path": "deviceInfo.battery.percentage", "value": 82},
+        {"path": "deviceInfo.battery.status", "value": "GOOD"},
+        {"path": "chargeRemaining", "value": 1440},
+    ]
 
 
 def test_to_redact_contains_expected_keys() -> None:
