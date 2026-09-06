@@ -21,7 +21,7 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.13'
+          python-version: '3.14'
 
       - name: Remove migrated Garmin Gear legacy folder handling
         shell: bash
@@ -61,7 +61,7 @@ jobs:
         run: rm -f .github/workflows/shared-card-picture-legacy-cleanup-temp.yml .shared-card-picture-cleanup-trigger
 
       - name: Install test and lint dependencies
-        run: python -m pip install -r requirements.txt -r requirements_lint.txt
+        run: pip install -r requirements.txt -r requirements_lint.txt
 
       - name: Verify no retired folder handling remains
         shell: bash
@@ -73,7 +73,7 @@ jobs:
           git diff --check
 
       - name: Pre-commit
-        run: pre-commit run --all-files
+        run: pre-commit run --all-files --hook-stage manual --config .github/pre-commit-config.yaml
 
       - name: Tests
         run: pytest tests/test_gear_picture.py tests/test_init.py -q
