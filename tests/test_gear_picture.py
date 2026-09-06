@@ -8,6 +8,8 @@ import pytest
 from custom_components.garmin_connect.gear_picture import (
     decode_gear_picture,
     decode_picture,
+    picture_collection_folder,
+    picture_url_prefix,
     remove_gear_pictures,
     remove_pictures,
     slugify_gear_picture_name,
@@ -21,8 +23,8 @@ from custom_components.garmin_connect.gear_picture import (
 def test_slugify_picture_name() -> None:
     assert slugify_picture_name("Bianchi Impulso Comp") == "bianchi_impulso_comp"
     assert slugify_picture_name("fēnix 7 Pro Sapphire Solar") == "fenix_7_pro_sapphire_solar"
-    assert slugify_picture_name("sensor.device_maintenance_Withings") == (
-        "sensor_device_maintenance_withings"
+    assert slugify_picture_name("garmin_fenix_7_pro_sapphire") == (
+        "garmin_fenix_7_pro_sapphire"
     )
 
 
@@ -41,6 +43,15 @@ def test_validate_picture_collection() -> None:
 def test_validate_picture_collection_rejects_unsafe_values(value: str) -> None:
     with pytest.raises(ValueError, match="Collection"):
         validate_picture_collection(value)
+
+
+def test_collection_maps_to_card_owned_picture_folder() -> None:
+    assert picture_collection_folder("garmin_gear") == "garmin_gear_card"
+    assert picture_url_prefix("garmin_gear") == "/local/garmin_gear_card/pictures"
+    assert picture_collection_folder("device_maintenance") == "device_maintenance_card"
+    assert picture_url_prefix("device_maintenance") == (
+        "/local/device_maintenance_card/pictures"
+    )
 
 
 def test_decode_jpeg_picture() -> None:
@@ -95,12 +106,9 @@ def test_gear_writer_alias(tmp_path: Path) -> None:
 
 def test_remove_picture_variants(tmp_path: Path) -> None:
     for extension in ("jpeg", "png"):
-        (tmp_path / f"withings_body_comp.{extension}").write_bytes(b"x")
-    removed = remove_pictures(tmp_path, "withings_body_comp")
-    assert sorted(removed) == [
-        "withings_body_comp.jpeg",
-        "withings_body_comp.png",
-    ]
+        (tmp_path / f"withings.{extension}").write_bytes(b"x")
+    removed = remove_pictures(tmp_path, "withings")
+    assert sorted(removed) == ["withings.jpeg", "withings.png"]
     assert list(tmp_path.iterdir()) == []
 
 
