@@ -1,0 +1,38 @@
+name: Gear M2 dev.2 release temp
+
+on:
+  push:
+    branches:
+      - feature/garmin-gear
+    paths:
+      - .gear-m2-dev2-release-trigger
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: feature/garmin-gear
+          fetch-depth: 0
+
+      - name: Create prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "3.0.24-gear-m2.0-dev.2" \
+            --target "a7b6b0b34af9759f403fda7d4d81c981b8a2b121" \
+            --title "Garmin Gear M2 dev.2 – Device settings battery probe" \
+            --prerelease \
+            --notes "Second Garmin Gear M2 development build. Adds a diagnostics-only device-settings probe for Edge 1040, fenix 7 Pro and Index Sleep Monitor using Garmin's device-info/settings endpoint. The probe records top-level settings keys and only battery/charge/remaining/percent-like scalar fields, without adding normal polling or new entities. Existing registered-device and ANT+/BLE battery handling remains unchanged. Garmin Fitness entity IDs and algorithms are unchanged."
+
+      - name: Remove one-shot files and commit cleanup
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/gear-m2-dev2-release-temp.yml .gear-m2-dev2-release-trigger
+          git commit -m "chore(gear): remove M2 dev.2 release helper"
+          git push origin HEAD:feature/garmin-gear
