@@ -17,7 +17,7 @@
   ],
   "quality_scale": "gold",
   "requirements": [
-    "ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@250472613761295d53d7eeeaaa82055af745ed06"
+    "ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@52681c2792a4b9764d53b7b71b4e5dafc32c4288"
   ],
   "version": "3.0.25-gear-pictures-dev.1"
 }
