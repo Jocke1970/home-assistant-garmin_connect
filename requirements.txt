@@ -1,4 +1,4 @@
 homeassistant>=2026.8.1
-ha-garmin @ git+https://github.com/Jocke1970/ha-garmin.git@250472613761295d53d7eeeaaa82055af745ed06
+ha-garmin @ git+https://github.com/Jocke1970/ha-garmin.git@52681c2792a4b9764d53b7b71b4e5dafc32c4288
 colorlog==6.12.0
 setuptools==84.0.0
