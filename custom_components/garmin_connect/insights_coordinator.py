@@ -52,7 +52,23 @@ def _json_value(value: Any) -> Any:
 
 def _serialize_result(result: InsightResult) -> dict[str, Any]:
     """Serialize one presentation-neutral rule result."""
-    return _json_value(asdict(result))
+    return {
+        "id": result.id,
+        "severity": result.severity,
+        "priority": result.priority,
+        "confidence": result.confidence,
+        "title_key": result.title_key,
+        "message_key": result.message_key,
+        "evidence": [
+            {
+                "code": evidence.code,
+                "value": evidence.value,
+                "threshold": evidence.threshold,
+            }
+            for evidence in result.evidence
+        ],
+        "ruleset_version": result.ruleset_version,
+    }
 
 
 def _recent_activity_summary(snapshot: InsightSnapshot) -> list[dict[str, Any]]:
