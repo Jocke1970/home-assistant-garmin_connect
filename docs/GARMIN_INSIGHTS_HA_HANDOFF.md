@@ -1,8 +1,8 @@
 # Garmin Insights — Home Assistant handoff
 
-**Status:** V1 runtime handoff  
+**Status:** V1 runtime + presentation handoff  
 **Branch:** `feature/garmin-insights-v1`  
-**Scope:** current snapshot orchestration + one native overview sensor
+**Scope:** current snapshot orchestration + one native overview sensor + localized presentation attributes
 
 ## Runtime flow
 
@@ -19,6 +19,8 @@ ha-garmin evaluate_insights()
   ↓
 InsightsCoordinator
   ↓
+HA presentation adapter
+  ↓
 sensor.garmin_insights_overview
 ```
 
@@ -32,6 +34,12 @@ can reuse the same Fitness inputs without a second 180-day Garmin history fetch.
 Insights fetches the requested current HA-local calendar day through
 `GarminHistoryClient.fetch_daily_recovery_metrics()`. This is the strict history
 path: adjacent-day presentation fallbacks are not allowed.
+
+Garmin can expose exact-date morning / `AFTER_WAKEUP_RESET` Training Readiness
+without also exposing a regular Training Readiness record. The normalized model
+keeps both sources separate. Snapshot completeness accepts either exact-date
+readiness source, and Rules V1 prefers regular readiness but falls back to morning
+readiness with explicit evidence provenance.
 
 The Insights coordinator refreshes hourly. A successful Fitness update also
 schedules an Insights refresh so a newly recorded activity can affect the current
@@ -52,7 +60,7 @@ unique ID contract is:
 <config_entry_id>_insights_overview
 ```
 
-The state is the strongest active severity:
+The state remains a stable machine-readable severity:
 
 ```text
 clear | positive | info | caution | warning
@@ -66,7 +74,7 @@ unconfigured | waiting_for_fitness
 
 Attributes include:
 
-- Rules V1 results in deterministic priority order
+- Rules V1 raw results in deterministic priority order
 - primary rule ID / severity / confidence
 - ruleset version
 - snapshot timestamp/date
@@ -75,10 +83,18 @@ Attributes include:
 - canonical Training V4 snapshot
 - Load Focus snapshot
 - compact seven-day activity context without location data
+- presentation language (`sv` or `en`)
+- localized status label/icon
+- localized primary title/message/icon
+- localized `presented_results` with human-readable evidence labels
 
-The rule result payload keeps stable `title_key` / `message_key` values from
-ha-garmin. User-facing Swedish/English prose is intentionally deferred until live
-validation has shown that the V1 thresholds and result combinations behave well.
+The raw result payload is preserved unchanged, including stable `title_key`,
+`message_key`, evidence codes and provenance from ha-garmin. The HA presentation
+adapter only maps those stable IDs/codes to Swedish or English labels and messages;
+it does not change rule priority, severity, confidence, thresholds or conflicts.
+
+Swedish is selected when Home Assistant's configured language starts with `sv`;
+all other languages currently fall back to English.
 
 ## Fitness handoff cache
 
@@ -93,20 +109,18 @@ They are updated only after a canonical Fitness context has been fetched and its
 Strain calibration has been resolved. No Fitness formula or entity contract is
 changed.
 
-## Live-validation checklist
+## Live-validation status
 
-Before locking Rules V1 thresholds, inspect the overview sensor on real Garmin
-data and verify:
+The first live account validation exposed one real Garmin shape: regular Training
+Readiness was absent while exact-date Morning Training Readiness was available.
+That provenance case is now covered in the library, HA handoff and tests.
 
-1. current date and recovery source availability
-2. Training Readiness / sleep / HRV values against Garmin Connect
-3. current Training V4 metrics against the existing Fitness sensors
-4. recent Training Effect coverage
-5. emitted rule IDs, severity, confidence and evidence
-6. missing/stale-data behavior on incomplete Garmin days
+The live snapshot subsequently validated as complete and emitted both
+`low_recent_load` and `favourable_training_signal` with explicit morning-readiness
+evidence.
 
-Only after this validation should thresholds or user-facing prose be treated as
-stable.
+Continue validating future natural account states before treating all V1
+thresholds and message wording as final.
 
 ## Scope guard
 
@@ -118,5 +132,5 @@ This handoff changes no:
 - Garmin authentication/session behavior
 - Lovelace card
 
-The next stage is live account validation, followed by threshold tuning if the
-observed V1 results justify it.
+The next stage after presentation validation is the Lovelace card / UI layer and
+continued observation of natural rule combinations on real Garmin data.
