@@ -176,6 +176,7 @@ async def test_insights_waits_for_canonical_fitness_context() -> None:
 
 def test_insights_overview_sensor_exposes_status_and_rule_provenance() -> None:
     coordinator = MagicMock()
+    coordinator.hass.config.language = "sv-SE"
     coordinator.data = {
         "configured": True,
         "status": "caution",
@@ -188,7 +189,22 @@ def test_insights_overview_sensor_exposes_status_and_rule_provenance() -> None:
         "primary_result_id": "recovery_caution",
         "primary_severity": "caution",
         "primary_confidence": "medium",
-        "results": [{"id": "recovery_caution", "severity": "caution"}],
+        "results": [
+            {
+                "id": "recovery_caution",
+                "severity": "caution",
+                "priority": 90,
+                "confidence": "medium",
+                "ruleset_version": 1,
+                "evidence": [
+                    {
+                        "code": "morning_training_readiness_low",
+                        "value": 35.0,
+                        "threshold": 40.0,
+                    }
+                ],
+            }
+        ],
         "data_quality": {"complete": True},
         "recovery": {"training_readiness": 35.0},
         "training": {"acwr": 1.0},
@@ -200,9 +216,15 @@ def test_insights_overview_sensor_exposes_status_and_rule_provenance() -> None:
     sensor = GarminInsightsOverviewSensor(coordinator, "entry_1")
 
     assert sensor.native_value == "caution"
+    assert sensor.icon == "mdi:alert-outline"
     attrs = sensor.extra_state_attributes
     assert attrs["primary_result_id"] == "recovery_caution"
     assert attrs["ruleset_version"] == 1
-    assert attrs["results"] == [
-        {"id": "recovery_caution", "severity": "caution"}
-    ]
+    assert attrs["presentation_language"] == "sv"
+    assert attrs["status_label"] == "Observera"
+    assert attrs["primary_title"] == "Återhämtningssignalerna är begränsade"
+    assert attrs["primary_icon"] == "mdi:heart-pulse"
+    assert attrs["presented_results"][0]["evidence"][0]["label"] == (
+        "Morgonens Training Readiness låg"
+    )
+    assert attrs["results"][0]["id"] == "recovery_caution"
