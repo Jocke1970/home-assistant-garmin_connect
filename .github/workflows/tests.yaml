@@ -6,7 +6,6 @@ on:
       - main
       - ng
       - feature/garmin-fitness
-      - feature/garmin-insights-v1
   pull_request:
     branches:
       - main
