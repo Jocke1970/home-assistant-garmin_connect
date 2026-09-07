@@ -44,7 +44,7 @@ def test_present_low_recent_load_in_swedish() -> None:
     assert presented["evidence"][0]["label"] == (
         "ACWR under gränsen för låg belastning"
     )
-    assert presented["evidence"][1]["label"] == "Negativ Ramp Rate"
+    assert presented["evidence"][1]["label"] == "Ramp Rate under noll"
 
 
 def test_present_morning_readiness_keeps_source_visible() -> None:
@@ -99,7 +99,7 @@ def test_dynamic_data_quality_evidence_is_human_readable() -> None:
 
 def test_status_presentation_keeps_machine_status_separate() -> None:
     assert status_presentation("warning", "sv") == {
-        "label": "Varning",
+        "label": "Varningsläge",
         "icon": "mdi:alert-circle-outline",
     }
     assert status_presentation("positive", "en") == {
