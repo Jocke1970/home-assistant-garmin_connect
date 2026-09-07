@@ -15,6 +15,11 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .insights_coordinator import InsightsCoordinator
+from .insights_presentation import (
+    normalize_insights_language,
+    present_insight_results,
+    status_presentation,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -53,7 +58,6 @@ class GarminInsightsOverviewSensor(CoordinatorEntity[InsightsCoordinator], Senso
 
     _attr_has_entity_name = True
     _attr_name = "Overview"
-    _attr_icon = "mdi:lightbulb-on-outline"
 
     def __init__(
         self,
@@ -71,6 +75,12 @@ class GarminInsightsOverviewSensor(CoordinatorEntity[InsightsCoordinator], Senso
             entry_type=DeviceEntryType.SERVICE,
         )
 
+    def _presentation_language(self) -> str:
+        """Return the configured HA language in the supported presentation set."""
+        config = getattr(self.coordinator.hass, "config", None)
+        language = getattr(config, "language", None)
+        return normalize_insights_language(language if isinstance(language, str) else None)
+
     @property
     def native_value(self) -> str | None:
         """Return the current overall Insights status."""
@@ -79,9 +89,23 @@ class GarminInsightsOverviewSensor(CoordinatorEntity[InsightsCoordinator], Senso
         return cast(str | None, self.coordinator.data.get("status"))
 
     @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Expose stable rule results and their input provenance."""
+    def icon(self) -> str:
+        """Return an icon matching the stable machine status."""
         data = self.coordinator.data or {}
+        status = cast(str | None, data.get("status"))
+        return status_presentation(status, self._presentation_language())["icon"]
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose stable raw results plus a localized HA presentation layer."""
+        data = self.coordinator.data or {}
+        language = self._presentation_language()
+        raw_results = data.get("results") or []
+        presented_results = present_insight_results(raw_results, language)
+        primary = presented_results[0] if presented_results else None
+        status = cast(str | None, data.get("status"))
+        presented_status = status_presentation(status, language)
+
         return {
             "configured": data.get("configured", False),
             "snapshot_complete": data.get("snapshot_complete", False),
@@ -93,7 +117,14 @@ class GarminInsightsOverviewSensor(CoordinatorEntity[InsightsCoordinator], Senso
             "primary_result_id": data.get("primary_result_id"),
             "primary_severity": data.get("primary_severity"),
             "primary_confidence": data.get("primary_confidence"),
-            "results": data.get("results") or [],
+            "results": raw_results,
+            "presentation_language": language,
+            "status_label": presented_status["label"],
+            "status_icon": presented_status["icon"],
+            "primary_title": primary.get("title") if primary else None,
+            "primary_message": primary.get("message") if primary else None,
+            "primary_icon": primary.get("icon") if primary else None,
+            "presented_results": presented_results,
             "data_quality": data.get("data_quality"),
             "recovery": data.get("recovery"),
             "training": data.get("training"),
