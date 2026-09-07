@@ -154,6 +154,7 @@ async def test_insights_coordinator_builds_and_evaluates_current_snapshot() -> N
     assert data["recovery"]["training_readiness"] == 80.0
     assert data["recent_activity_count"] == 1
     assert data["recent_activities"][0]["activity_type"] == "cycling"
+    assert data["recent_activities"][0]["garmin_training_load"] == 80.0
 
 
 async def test_insights_waits_for_canonical_fitness_context() -> None:
