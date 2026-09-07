@@ -62,7 +62,7 @@ _RESULT_TEXT: dict[PresentationLanguage, dict[str, tuple[str, str]]] = {
         ),
         "favourable_training_signal": (
             "Goda återhämtningssignaler",
-            "Flera aktuella återhämtningsvärden ser gynnsamma ut tillsammans.",
+            "Flera aktuella återhämtningsvärden verkar gynnsamma tillsammans.",
         ),
     },
 }
@@ -88,10 +88,10 @@ _STATUS_TEXT: dict[PresentationLanguage, dict[str, str]] = {
     },
     "sv": {
         "clear": "Inga aktiva insikter",
-        "positive": "Positiv",
+        "positive": "Gynnsam",
         "info": "Information",
         "caution": "Observera",
-        "warning": "Varning",
+        "warning": "Varningsläge",
         "waiting_for_fitness": "Väntar på Fitness-data",
         "unconfigured": "Inte konfigurerad",
     },
@@ -139,10 +139,10 @@ _EVIDENCE_TEXT: dict[PresentationLanguage, dict[str, str]] = {
     "sv": {
         "snapshot_incomplete": "Ofullständig snapshot",
         "acwr_above_spike_threshold": "ACWR över gränsen för belastningsökning",
-        "positive_ramp_rate": "Positiv Ramp Rate",
+        "positive_ramp_rate": "Ramp Rate över noll",
         "atl_above_ctl": "ATL över CTL",
         "acwr_below_low_load_threshold": "ACWR under gränsen för låg belastning",
-        "negative_ramp_rate": "Negativ Ramp Rate",
+        "negative_ramp_rate": "Ramp Rate under noll",
         "sparse_recent_activity_window": "Få aktiviteter den senaste tiden",
         "training_readiness_low": "Training Readiness låg",
         "morning_training_readiness_low": "Morgonens Training Readiness låg",
