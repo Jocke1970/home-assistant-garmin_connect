@@ -189,11 +189,23 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.sex: FitnessSex | None = (
             cast(FitnessSex, raw_sex) if raw_sex in ("male", "female") else None
         )
+        self._insight_context: TrimpTrainingContext | None = None
+        self._insight_personal_trimp_max: float | None = None
 
     @property
     def configured(self) -> bool:
         """Return whether both Banister TRIMP profile inputs are configured."""
         return self.user_max_hr is not None and self.sex is not None
+
+    @property
+    def insight_context(self) -> TrimpTrainingContext | None:
+        """Return the latest canonical context for the Insights adapter."""
+        return self._insight_context
+
+    @property
+    def insight_personal_trimp_max(self) -> float | None:
+        """Return the Strain calibration paired with the cached context."""
+        return self._insight_personal_trimp_max
 
     async def _fetch_context(
         self,
@@ -214,6 +226,8 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch canonical TRIMP history with a stable EMA warm-up period."""
         if not self.configured:
+            self._insight_context = None
+            self._insight_personal_trimp_max = None
             return self._empty_data(configured=False)
 
         user_max_hr = self.user_max_hr
@@ -295,6 +309,9 @@ class FitnessCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
         except ValueError as err:
             raise UpdateFailed(f"Error calculating Garmin Fitness metrics: {err}") from err
+
+        self._insight_context = effective_context
+        self._insight_personal_trimp_max = personal_trimp_max
 
         visible_points = all_points[-FITNESS_HISTORY_DAYS:]
         visible_history_complete = len(visible_points) == FITNESS_HISTORY_DAYS

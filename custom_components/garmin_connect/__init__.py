@@ -23,6 +23,7 @@ from .const import (
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     FITNESS_DATA_KEY,
+    INSIGHTS_DATA_KEY,
 )
 from .coordinator import (
     ActivityCoordinator,
@@ -46,6 +47,8 @@ from .fitness_service import (
 from .fitness_statistics import async_backfill_fitness_statistics
 from .gear_picture import async_setup_gear_picture_websocket
 from .gear_sensor import async_add_gear_sensor_entities
+from .insights_coordinator import InsightsCoordinator
+from .insights_sensor import async_add_insights_sensor_entities
 from .services import async_setup_services, async_unload_services
 
 _LOGGER = logging.getLogger(__name__)
@@ -198,6 +201,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: GarminConnectConfigEntry
         nutrition=NutritionCoordinator(hass, entry, client, auth),
     )
     fitness = FitnessCoordinator(hass, entry, client)
+    insights = InsightsCoordinator(hass, entry, client, fitness)
 
     try:
         await coordinators.core.async_config_entry_first_refresh()
@@ -224,16 +228,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: GarminConnectConfigEntry
         fitness.async_refresh(),
         return_exceptions=True,
     )
+    await insights.async_refresh()
 
     entry.runtime_data = coordinators
 
     # Snapshot options so the update listener can tell what changed.
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = dict(entry.options)
     hass.data.setdefault(FITNESS_DATA_KEY, {})[entry.entry_id] = fitness
+    hass.data.setdefault(INSIGHTS_DATA_KEY, {})[entry.entry_id] = insights
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     await async_add_fitness_sensor_entities(hass, entry, fitness)
     await async_add_gear_sensor_entities(hass, entry, coordinators.gear)
+    await async_add_insights_sensor_entities(hass, entry, insights)
     async_setup_gear_picture_websocket(hass)
     async_backfill_fitness_statistics(hass, entry.entry_id, fitness.data or {})
 
@@ -241,6 +248,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: GarminConnectConfigEntry
         await async_setup_services(hass)
     await async_setup_fitness_probe_service(hass)
 
+    def _schedule_insights_refresh() -> None:
+        hass.async_create_task(insights.async_request_refresh())
+
+    entry.async_on_unload(fitness.async_add_listener(_schedule_insights_refresh))
     entry.async_on_unload(entry.add_update_listener(async_options_update_listener))
 
     return True
@@ -291,6 +302,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: GarminConnectConfigEntr
         hass.data[DOMAIN].pop(entry.entry_id, None)
     if FITNESS_DATA_KEY in hass.data:
         hass.data[FITNESS_DATA_KEY].pop(entry.entry_id, None)
+    if INSIGHTS_DATA_KEY in hass.data:
+        hass.data[INSIGHTS_DATA_KEY].pop(entry.entry_id, None)
 
     if unload_ok and len(hass.config_entries.async_entries(DOMAIN)) == 1:
         await async_unload_services(hass)
