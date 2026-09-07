@@ -9,7 +9,7 @@ repos:
         entry: codespell
         args:
           - --quiet-level=2
-          - --ignore-words-list=hass,ba,fo,te
+          - --ignore-words-list=hass,ba,fo,te,ser,positiv,varning,negativ
           - --skip=tests/fixtures/*,custom_components/garmin_connect/translations/*,www
 
       - id: pyupgrade
