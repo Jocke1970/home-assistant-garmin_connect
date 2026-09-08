@@ -6,6 +6,7 @@ on:
       - main
       - ng
       - feature/garmin-fitness
+      - fix/daily-budget-rounding-floor
   pull_request:
     branches:
       - main
