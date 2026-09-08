@@ -17,7 +17,7 @@
   ],
   "quality_scale": "gold",
   "requirements": [
-    "ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@ab3ef17317e6b3fcabd2491cb24dda1cbb2e07d8"
+    "ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@79e96e68fff176b6a68c3bf5deaa15bf327096c3"
   ],
-  "version": "3.0.28-daily-budget-v1"
+  "version": "3.0.29-fitness-rhr-v1"
 }
