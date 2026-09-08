@@ -10,6 +10,7 @@ from typing import Any
 from aiohttp import ClientError
 from ha_garmin import GarminClient, GarminHistoryClient
 from ha_garmin.exceptions import GarminAuthError, GarminConnectError
+from ha_garmin.fitness import recommend_daily_load_budget
 from ha_garmin.insights import (
     INSIGHT_RULESET_VERSION,
     InsightResult,
@@ -150,6 +151,19 @@ class InsightsCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         primary = results[0] if results else None
 
+        daily_load_budget: dict[str, Any] | None = None
+        try:
+            budget = recommend_daily_load_budget(
+                context.history,
+                personal_trimp_max,
+                insight_result_ids=tuple(result.id for result in results),
+            )
+            daily_load_budget = _json_value(asdict(budget))
+        except ValueError as err:
+            # Budgeting is additive. A sparse or temporarily incomplete history
+            # must not take down otherwise valid Insights output.
+            _LOGGER.debug("Daily load budget unavailable: %s", err)
+
         return {
             "configured": True,
             "status": status,
@@ -169,6 +183,7 @@ class InsightsCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "load_focus": _json_value(asdict(snapshot.load_focus)),
             "recent_activity_count": len(snapshot.recent_activities),
             "recent_activities": _recent_activity_summary(snapshot),
+            "daily_load_budget": daily_load_budget,
         }
 
     def _empty_data(self, *, status: str, configured: bool) -> dict[str, Any]:
@@ -192,4 +207,5 @@ class InsightsCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "load_focus": None,
             "recent_activity_count": 0,
             "recent_activities": [],
+            "daily_load_budget": None,
         }
