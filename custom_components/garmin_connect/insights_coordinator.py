@@ -81,6 +81,7 @@ def _recent_activity_summary(snapshot: InsightSnapshot) -> list[dict[str, Any]]:
             "duration_minutes": activity.duration_minutes,
             "aerobic_training_effect": activity.aerobic_training_effect,
             "anaerobic_training_effect": activity.anaerobic_training_effect,
+            "garmin_training_load": activity.garmin_training_load,
         }
         for activity in snapshot.recent_activities
     ]

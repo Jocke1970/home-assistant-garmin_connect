@@ -5,6 +5,7 @@ from typing import Final
 DOMAIN: Final = "garmin_connect"
 FITNESS_DATA_KEY: Final = f"{DOMAIN}_fitness"
 INSIGHTS_DATA_KEY: Final = f"{DOMAIN}_insights"
+ACTIVITY_EVALUATION_DATA_KEY: Final = f"{DOMAIN}_activity_evaluation"
 
 # Config entry keys
 CONF_TOKEN: Final = "token"
