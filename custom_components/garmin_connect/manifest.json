@@ -17,7 +17,7 @@
   ],
   "quality_scale": "gold",
   "requirements": [
-    "ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@2e318f9a8ce815ad0f9afc9b6e14ffb67084a0a7"
+    "ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@ab3ef17317e6b3fcabd2491cb24dda1cbb2e07d8"
   ],
   "version": "3.0.28-daily-budget-v1"
 }
