@@ -17,7 +17,7 @@
   ],
   "quality_scale": "gold",
   "requirements": [
-    "ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@5950ca99ab5c4e76d68619c06d07f5af89bae5b1"
+    "ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@89b44e242175ad7901860ae5e34ab3105f4863b3"
   ],
-  "version": "3.0.30-fitness-shadow-v1"
+  "version": "3.0.31-daily-budget-rounding-v1"
 }
