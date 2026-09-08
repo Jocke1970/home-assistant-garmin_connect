@@ -17,7 +17,7 @@
   ],
   "quality_scale": "gold",
   "requirements": [
-    "ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@80939ab13f9463357de87bfaeb7bdd9659abe3ad"
+    "ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@2e318f9a8ce815ad0f9afc9b6e14ffb67084a0a7"
   ],
-  "version": "3.0.27-activity-eval-v1"
+  "version": "3.0.28-daily-budget-v1"
 }
