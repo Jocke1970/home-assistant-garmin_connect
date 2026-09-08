@@ -12,7 +12,10 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
+from .activity_evaluation_coordinator import ActivityEvaluationCoordinator
+from .activity_evaluation_sensor import async_add_activity_evaluation_sensor_entities
 from .const import (
+    ACTIVITY_EVALUATION_DATA_KEY,
     CONF_CLIENT_ID,
     CONF_FITNESS_MAX_HR,
     CONF_FITNESS_SEX,
@@ -53,7 +56,7 @@ from .services import async_setup_services, async_unload_services
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.SENSOR]
+PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.SELECT]
 
 # Mapping of old sensor keys (v1) to new sensor keys (v2).
 # Keys present in both versions are migrated by unique_id prefix only.
@@ -201,6 +204,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: GarminConnectConfigEntry
         nutrition=NutritionCoordinator(hass, entry, client, auth),
     )
     fitness = FitnessCoordinator(hass, entry, client)
+    activity_evaluation = ActivityEvaluationCoordinator(
+        hass,
+        entry,
+        client,
+        fitness,
+        coordinators.body,
+    )
     insights = InsightsCoordinator(hass, entry, client, fitness)
 
     try:
@@ -228,6 +238,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: GarminConnectConfigEntry
         fitness.async_refresh(),
         return_exceptions=True,
     )
+    await activity_evaluation.async_refresh()
     await insights.async_refresh()
 
     entry.runtime_data = coordinators
@@ -235,12 +246,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: GarminConnectConfigEntry
     # Snapshot options so the update listener can tell what changed.
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = dict(entry.options)
     hass.data.setdefault(FITNESS_DATA_KEY, {})[entry.entry_id] = fitness
+    hass.data.setdefault(ACTIVITY_EVALUATION_DATA_KEY, {})[
+        entry.entry_id
+    ] = activity_evaluation
     hass.data.setdefault(INSIGHTS_DATA_KEY, {})[entry.entry_id] = insights
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     await async_add_fitness_sensor_entities(hass, entry, fitness)
     await async_add_gear_sensor_entities(hass, entry, coordinators.gear)
     await async_add_insights_sensor_entities(hass, entry, insights)
+    await async_add_activity_evaluation_sensor_entities(
+        hass,
+        entry,
+        activity_evaluation,
+    )
     async_setup_gear_picture_websocket(hass)
     async_backfill_fitness_statistics(hass, entry.entry_id, fitness.data or {})
 
@@ -248,10 +267,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: GarminConnectConfigEntry
         await async_setup_services(hass)
     await async_setup_fitness_probe_service(hass)
 
-    def _schedule_insights_refresh() -> None:
+    def _schedule_fitness_dependents_refresh() -> None:
         hass.async_create_task(insights.async_request_refresh())
+        hass.async_create_task(activity_evaluation.async_request_refresh())
 
-    entry.async_on_unload(fitness.async_add_listener(_schedule_insights_refresh))
+    def _schedule_activity_evaluation_refresh() -> None:
+        hass.async_create_task(activity_evaluation.async_request_refresh())
+
+    entry.async_on_unload(
+        fitness.async_add_listener(_schedule_fitness_dependents_refresh)
+    )
+    entry.async_on_unload(
+        coordinators.body.async_add_listener(_schedule_activity_evaluation_refresh)
+    )
     entry.async_on_unload(entry.add_update_listener(async_options_update_listener))
 
     return True
@@ -302,6 +330,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: GarminConnectConfigEntr
         hass.data[DOMAIN].pop(entry.entry_id, None)
     if FITNESS_DATA_KEY in hass.data:
         hass.data[FITNESS_DATA_KEY].pop(entry.entry_id, None)
+    if ACTIVITY_EVALUATION_DATA_KEY in hass.data:
+        hass.data[ACTIVITY_EVALUATION_DATA_KEY].pop(entry.entry_id, None)
     if INSIGHTS_DATA_KEY in hass.data:
         hass.data[INSIGHTS_DATA_KEY].pop(entry.entry_id, None)
 
