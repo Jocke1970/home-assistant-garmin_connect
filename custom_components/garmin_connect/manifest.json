@@ -17,7 +17,7 @@
   ],
   "quality_scale": "gold",
   "requirements": [
-    "ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@cbe701d6df237190423ac66ec831b4ecc1cf36ea"
+    "ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@80939ab13f9463357de87bfaeb7bdd9659abe3ad"
   ],
   "version": "3.0.27-activity-eval-v1"
 }
