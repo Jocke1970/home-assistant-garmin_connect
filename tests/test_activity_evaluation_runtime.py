@@ -1,6 +1,6 @@
 """Tests for Home Assistant recent activity evaluation runtime."""
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -147,7 +147,13 @@ async def test_activity_evaluation_keeps_only_five_newest_activities() -> None:
     )
     data = await coordinator._async_update_data()
 
-    assert [item["activity_id"] for item in data["evaluations"]] == [105, 104, 103, 102, 101]
+    assert [item["activity_id"] for item in data["evaluations"]] == [
+        105,
+        104,
+        103,
+        102,
+        101,
+    ]
     assert data["selected_activity_id"] == 105
     client.get_activity_details.assert_not_awaited()
 
@@ -239,7 +245,7 @@ def test_swedish_presentation_matches_locked_short_aerobic_copy() -> None:
 
     presented = present_activity_evaluation(raw, "sv-SE")
 
-    assert presented["activity_name"] == "Virtuell cykling"
+    assert presented["activity_name"] == "Inomhuscykling"
     assert presented["activity_icon"] == "mdi:bike"
     assert presented["title"] == "Kort aerobt pass"
     assert presented["message"] == (
@@ -247,7 +253,7 @@ def test_swedish_presentation_matches_locked_short_aerobic_copy() -> None:
     )
     assert presented["confidence_label"] == "Saknas"
     assert activity_option_label(raw, "sv-SE", today=_DAY) == (
-        "Idag · Virtuell cykling · 7 min"
+        "Idag · Inomhuscykling · 7 min"
     )
 
 
@@ -284,5 +290,5 @@ def test_activity_evaluation_sensor_exposes_localized_selected_pass() -> None:
     assert sensor.icon == "mdi:bike"
     attrs = sensor.extra_state_attributes
     assert attrs["title"] == "Kort aerobt pass"
-    assert attrs["activity_name"] == "Virtuell cykling"
+    assert attrs["activity_name"] == "Inomhuscykling"
     assert attrs["post_acwr"] == 0.57
