@@ -133,6 +133,6 @@ class GarminActivityEvaluationSensor(
             "evaluation_count": data.get("evaluation_count", 0),
             "selected_activity_id": data.get("selected_activity_id"),
             "body_weight_kg": data.get("body_weight_kg"),
-            "max_hr": data.get("max_hr"),
+            "user_max_hr": data.get("max_hr"),
             "evaluation_limit": data.get("limit"),
         }
