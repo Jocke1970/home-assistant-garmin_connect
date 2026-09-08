@@ -6,6 +6,7 @@ on:
       - main
       - ng
       - feature/garmin-fitness
+      - fix/activity-eval-max-hr-attr
   pull_request:
     branches:
       - main
