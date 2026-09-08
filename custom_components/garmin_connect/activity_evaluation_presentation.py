@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import date
-from typing import Any, Literal, Mapping
+from typing import Any, Literal
 
 PresentationLanguage = Literal["en", "sv"]
 
@@ -101,7 +102,7 @@ _ACTIVITY_NAMES: dict[PresentationLanguage, dict[str, str]] = {
         "yoga": "Yoga",
     },
     "sv": {
-        "virtual_ride": "Virtuell cykling",
+        "virtual_ride": "Inomhuscykling",
         "cycling": "Cykling",
         "road_biking": "Cykling",
         "indoor_cycling": "Inomhuscykling",
