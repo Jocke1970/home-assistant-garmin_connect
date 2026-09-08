@@ -6,6 +6,7 @@ on:
       - main
       - ng
       - feature/garmin-fitness
+      - feature/garmin-activity-evaluation
   pull_request:
     branches:
       - main
