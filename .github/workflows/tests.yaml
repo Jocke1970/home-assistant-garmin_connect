@@ -6,7 +6,6 @@ on:
       - main
       - ng
       - feature/garmin-fitness
-      - fix/fitness-current-day-rhr
   pull_request:
     branches:
       - main
