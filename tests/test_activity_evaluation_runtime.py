@@ -275,6 +275,8 @@ def test_activity_evaluation_sensor_exposes_localized_selected_pass() -> None:
             "title_key": "activity_eval_short_aerobic_title",
             "message_key": "activity_eval_short_aerobic_message",
             "performance_confidence": "unavailable",
+            "avg_hr": 126.0,
+            "max_hr": 154.0,
             "post_acwr": 0.57,
             "post_strain": 5.1,
             "post_tsb": 5.7,
@@ -291,4 +293,6 @@ def test_activity_evaluation_sensor_exposes_localized_selected_pass() -> None:
     attrs = sensor.extra_state_attributes
     assert attrs["title"] == "Kort aerobt pass"
     assert attrs["activity_name"] == "Inomhuscykling"
+    assert attrs["max_hr"] == 154.0
+    assert attrs["user_max_hr"] == 195.0
     assert attrs["post_acwr"] == 0.57
