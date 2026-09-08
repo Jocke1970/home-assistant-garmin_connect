@@ -6,7 +6,6 @@ on:
       - main
       - ng
       - feature/garmin-fitness
-      - fix/fitness-shadow-activity-dedup
   pull_request:
     branches:
       - main
