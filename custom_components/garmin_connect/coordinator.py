@@ -30,6 +30,7 @@ from .const import (
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
 )
+from .linked_gear import enrich_activity_data_with_linked_gear
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -152,6 +153,7 @@ class ActivityCoordinator(BaseGarminCoordinator):
         """Fetch activity data from Garmin Connect."""
         try:
             data = await self.client.fetch_activity_data()
+            data = await enrich_activity_data_with_linked_gear(self.client, data)
             await self._update_tokens_if_changed()
         except GarminAuthError as err:
             raise ConfigEntryAuthFailed("Authentication failed") from err
