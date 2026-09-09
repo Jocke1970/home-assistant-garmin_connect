@@ -6,6 +6,7 @@ on:
       - main
       - ng
       - feature/garmin-fitness
+      - fix/shadow-session-cluster-ha
   pull_request:
     branches:
       - main
