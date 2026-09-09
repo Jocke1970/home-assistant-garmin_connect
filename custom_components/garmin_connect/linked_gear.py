@@ -123,9 +123,11 @@ async def enrich_activity_data_with_linked_gear(
         return data
 
     raw_activity_id = last_activity.get("activityId")
+    if not isinstance(raw_activity_id, (int, str)):
+        return data
     try:
         activity_id = int(raw_activity_id)
-    except (TypeError, ValueError):
+    except ValueError:
         return data
     if activity_id <= 0:
         return data
@@ -136,9 +138,10 @@ async def enrich_activity_data_with_linked_gear(
     if cached is not None and now - cached[0] < _CACHE_TTL_SECONDS:
         linked_gear = cached[1]
     else:
-        linked_gear = await _fetch_linked_gear(client, activity_id)
-        if linked_gear is None:
+        fetched = await _fetch_linked_gear(client, activity_id)
+        if fetched is None:
             return data
+        linked_gear = fetched
         _CACHE[cache_key] = (now, linked_gear)
         for key, (stored_at, _) in list(_CACHE.items()):
             if now - stored_at >= _CACHE_TTL_SECONDS:
