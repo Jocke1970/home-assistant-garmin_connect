@@ -14,6 +14,24 @@ from ha_garmin.exceptions import GarminAuthError, GarminConnectError
 _LOGGER = logging.getLogger(__name__)
 _CACHE_TTL_SECONDS = 30 * 60
 _CACHE: dict[tuple[int, int], tuple[float, list[dict[str, Any]]]] = {}
+_GENERIC_NAMES = {"", "unknown", "other"}
+
+
+def _display_name(item: dict[str, Any], brand: str, model: str, custom: str) -> str:
+    """Prefer a useful custom/brand-model name over Garmin's generic Unknown label."""
+    candidates = (
+        item.get("displayName"),
+        item.get("gearName"),
+        item.get("name"),
+    )
+    for candidate in candidates:
+        text = str(candidate or "").strip()
+        if text.lower() not in _GENERIC_NAMES:
+            return text
+    if custom:
+        return custom
+    brand_model = f"{brand} {model}".strip()
+    return brand_model or "Unknown"
 
 
 def _normalize_linked_gear(raw: Any) -> list[dict[str, Any]]:
@@ -50,17 +68,10 @@ def _normalize_linked_gear(raw: Any) -> list[dict[str, Any]]:
         if not gear_uuid:
             continue
 
-        brand = item.get("gearMakeName") or item.get("gearBrand") or item.get("brand") or ""
-        model = item.get("gearModelName") or item.get("gearModel") or item.get("model") or ""
-        custom = item.get("customMakeModel") or item.get("custom_make_model") or ""
-        name = (
-            item.get("displayName")
-            or item.get("gearName")
-            or item.get("name")
-            or custom
-            or f"{brand} {model}".strip()
-            or "Unknown"
-        )
+        brand = str(item.get("gearMakeName") or item.get("gearBrand") or item.get("brand") or "").strip()
+        model = str(item.get("gearModelName") or item.get("gearModel") or item.get("model") or "").strip()
+        custom = str(item.get("customMakeModel") or item.get("custom_make_model") or "").strip()
+        name = _display_name(item, brand, model, custom)
         gear_type = item.get("gearTypeName") or item.get("gearType") or item.get("gear_type") or ""
         if isinstance(gear_type, dict):
             gear_type = gear_type.get("typeKey") or gear_type.get("name") or ""
@@ -68,11 +79,11 @@ def _normalize_linked_gear(raw: Any) -> list[dict[str, Any]]:
         normalized.append(
             {
                 "gear_uuid": str(gear_uuid),
-                "name": str(name),
+                "name": name,
                 "gear_type": str(gear_type),
-                "brand": str(brand),
-                "model": str(model),
-                "custom_make_model": str(custom),
+                "brand": brand,
+                "model": model,
+                "custom_make_model": custom,
             }
         )
 
