@@ -43,6 +43,7 @@ async def test_linked_gear_is_exposed_on_latest_activity() -> None:
             },
             {
                 "uuid": "540c8eeacead401bb7101e870319387e",
+                "displayName": "Unknown",
                 "customMakeModel": "Bontrager Ion 200 RT Flare",
                 "gearTypeName": "Bike Component",
                 "gearMakeName": "Bontrager",
