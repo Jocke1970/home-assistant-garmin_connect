@@ -1,9 +1,9 @@
 """Canonical Garmin Gear engine for Home Assistant.
 
 The engine consumes normalized source records from ha-garmin and turns them
-into presentation-ready GearItem objects. It intentionally does not merge
-records across Garmin identity domains unless a future explicit link proves
-that they represent the same physical item.
+into presentation-ready GearItem objects. Garmin identity domains stay
+separate in the source records; only explicitly confirmed physical links are
+combined into one presentation item.
 """
 
 from __future__ import annotations
@@ -24,6 +24,16 @@ _ACTIVITY_CATEGORY_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
     (("rowing", "cardio", "elliptical", "walking"), "cardio"),
     (("ski", "snowboard", "skate"), "winter_sport"),
 )
+
+# These links are based on observed Garmin source identities from the user's
+# account. They are intentionally explicit: no display-name auto matching is
+# performed across Garmin identity domains.
+_BONTRAGER_GEAR_UUID = "540c8eeacead401bb7101e870319387e"
+_BONTRAGER_SENSOR_SOURCE_ID = "garmin_sensor:1f8eafdc59256ed2"
+_VARIA_GEAR_UUID = "c4d8a6db863f4907bd0b1d4c06d9d9ef"
+_VARIA_SENSOR_SOURCE_ID = "garmin_sensor:90cf2b37799261be"
+_SPEED_SENSOR_GEAR_UUID = "054f917179d8489db3e76cdd5606bf64"
+_MORPHEUS_GEAR_UUID = "220a3e46556d43eda2d95200faee1340"
 
 
 def _add_category(categories: list[str], category: str) -> None:
@@ -147,7 +157,7 @@ def classify_record(record: GearSourceRecord) -> tuple[list[str], str]:
 
 
 def _item_from_record(record: GearSourceRecord) -> GearItem:
-    """Build one canonical item without cross-source merging."""
+    """Build one canonical item from one source record."""
     categories, primary_category = classify_record(record)
     return GearItem(
         id=record.source_id,
@@ -166,9 +176,122 @@ def _item_from_record(record: GearSourceRecord) -> GearItem:
     )
 
 
+def _sensor_text(record: GearSourceRecord, key: str) -> str:
+    """Return one sensor metadata value as normalized uppercase text."""
+    return str(record.metadata.get(key) or "").strip().upper()
+
+
+def _sensor_id_text(record: GearSourceRecord, key: str) -> str:
+    """Return one normalized Garmin sensor id value as text."""
+    return str(record.garmin_ids.get(key) or "").strip().upper()
+
+
+def _is_confirmed_sensor_link(
+    gear: GearSourceRecord, sensor: GearSourceRecord
+) -> bool:
+    """Return whether two source records are a confirmed physical association."""
+    if gear.source != "garmin_gear" or sensor.source != "garmin_sensor":
+        return False
+
+    gear_uuid = str(gear.garmin_ids.get("gear_uuid") or "")
+
+    if gear_uuid == _BONTRAGER_GEAR_UUID:
+        return sensor.source_id == _BONTRAGER_SENSOR_SOURCE_ID
+
+    if gear_uuid == _VARIA_GEAR_UUID:
+        # Garmin currently exposes the Varia radar through the recent-sensors
+        # endpoint as HEART_RATE. The stable serial-based sensor identity proves
+        # that this is the same source that previously looked like an HR sensor.
+        return sensor.source_id == _VARIA_SENSOR_SOURCE_ID
+
+    if gear_uuid == _SPEED_SENSOR_GEAR_UUID:
+        return (
+            _sensor_text(sensor, "sensor_type") == "BIKE_SPEED"
+            and str(sensor.manufacturer or "").upper() == "GARMIN"
+            and _sensor_id_text(sensor, "product_id") == "9"
+            and _sensor_id_text(sensor, "part_number") == "9"
+        )
+
+    if gear_uuid == _MORPHEUS_GEAR_UUID:
+        return (
+            _sensor_text(sensor, "sensor_type") == "HEART_RATE"
+            and str(sensor.manufacturer or "").upper() == "FITCARE"
+            and _sensor_id_text(sensor, "product_id") == "5"
+            and _sensor_text(sensor, "software_version") == "0.3"
+        )
+
+    return False
+
+
+def _item_from_confirmed_link(
+    gear: GearSourceRecord, sensor: GearSourceRecord
+) -> GearItem:
+    """Build one presentation item while retaining both Garmin source records."""
+    gear_categories, primary_category = classify_record(gear)
+    sensor_categories, _ = classify_record(sensor)
+    categories = list(gear_categories)
+    for category in sensor_categories:
+        _add_category(categories, category)
+
+    garmin_ids = dict(gear.garmin_ids)
+    for key, value in sensor.garmin_ids.items():
+        garmin_ids.setdefault(key, value)
+
+    metadata = dict(gear.metadata)
+    metadata.update(sensor.metadata)
+    metadata["physical_link"] = "confirmed"
+    metadata["linked_sensor_source_id"] = sensor.source_id
+
+    return GearItem(
+        id=gear.source_id,
+        name=gear.name or sensor.name or "Unknown Gear",
+        manufacturer=gear.manufacturer or sensor.manufacturer,
+        model=gear.model or sensor.model,
+        garmin_ids=garmin_ids,
+        categories=categories,
+        primary_category=primary_category,
+        sources=[gear, sensor],
+        active=gear.active,
+        last_used_at=gear.last_used_at,
+        last_seen_at=sensor.last_seen_at or gear.last_seen_at,
+        activity_count=gear.activity_count,
+        metadata=metadata,
+    )
+
+
+def _build_items(records: list[GearSourceRecord]) -> list[GearItem]:
+    """Build physical presentation items using only confirmed cross-source links."""
+    consumed_sensor_ids: set[str] = set()
+    items: list[GearItem] = []
+
+    for record in records:
+        if record.source == "garmin_sensor" and record.source_id in consumed_sensor_ids:
+            continue
+
+        if record.source == "garmin_gear":
+            linked_sensor = next(
+                (
+                    candidate
+                    for candidate in records
+                    if candidate.source == "garmin_sensor"
+                    and candidate.source_id not in consumed_sensor_ids
+                    and _is_confirmed_sensor_link(record, candidate)
+                ),
+                None,
+            )
+            if linked_sensor is not None:
+                consumed_sensor_ids.add(linked_sensor.source_id)
+                items.append(_item_from_confirmed_link(record, linked_sensor))
+                continue
+
+        items.append(_item_from_record(record))
+
+    return items
+
+
 def build_gear_overview(data: dict[str, Any]) -> dict[str, Any]:
     """Build the canonical Home Assistant Gear overview payload."""
-    items: list[dict[str, Any]] = []
+    records: list[GearSourceRecord] = []
     source_counts: Counter[str] = Counter()
     category_counts: Counter[str] = Counter()
     invalid_record_count = 0
@@ -179,15 +302,19 @@ def build_gear_overview(data: dict[str, Any]) -> dict[str, Any]:
             continue
         try:
             record = GearSourceRecord.model_validate(raw)
-            item = _item_from_record(record)
         except ValidationError:
             invalid_record_count += 1
             continue
 
+        records.append(record)
         source_counts[record.source] += 1
+
+    canonical_items = _build_items(records)
+    items = [item.model_dump(mode="json") for item in canonical_items]
+
+    for item in canonical_items:
         for category in item.categories:
             category_counts[category] += 1
-        items.append(item.model_dump(mode="json"))
 
     active_count = sum(item.get("active") is True for item in items)
     inactive_count = sum(item.get("active") is False for item in items)

@@ -19,5 +19,5 @@
   "requirements": [
     "ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@c5c2d7e62bb7d9d311c11200ab325f435a2da5c9"
   ],
-  "version": "3.0.32-shadow-cluster-v1"
+  "version": "3.0.33-gear-links-v1"
 }
