@@ -1,57 +1,187 @@
 # Garmin Gear metadata pipeline
 
-This document describes the Gear metadata flow used by the Garmin Connect Home Assistant integration and the `ha-garmin` client.
+This document describes the current Garmin Gear architecture used by the Garmin Connect Home Assistant integration and the `ha-garmin` client.
 
-The goal is to enrich Garmin Gear with useful, current metadata without polling every gear item separately.
+The design goal is to keep Garmin source identities intact while presenting one useful physical item in Home Assistant when two source records are known to represent the same device.
+
+## Current status
+
+Live-verified on 2026-09-13/14:
+
+- Home Assistant integration: `3.0.33-gear-links-v1`
+- canonical HA development branch: `feature/garmin-fitness`
+- frontend card: `0.3.0-dev.16`
+- overview entity: `sensor.garmin_gear_overview_2`
+- schema: `1.0`
+- live snapshot after confirmed sensor linking:
+  - 51 Garmin source records
+  - 41 Garmin Gear records
+  - 6 registered Garmin-device records
+  - 4 recent ANT+/BLE sensor records
+  - 47 backend physical items after confirmed Gear <-> sensor linking
+  - 43 frontend physical cards after additional presentation-only grouping
+
+The integration currently pins `ha-garmin` by exact Git commit. `ha-garmin` remains a separate runtime dependency and owns Garmin API access/normalization and shared Fitness/Insights logic; Home Assistant owns coordinators, entities, Gear presentation canonicalization and services.
 
 ## Scope
 
 The Gear flow covers:
 
 - Garmin Gear inventory and usage statistics
-- default activity types for each gear item
+- default activity types for each Gear item
 - dynamic Garmin activity type metadata (`typeId`, `typeKey`, `parentTypeId`)
-- the latest recent activity associated with each gear item
-- Home Assistant sensor attributes used by downstream templates and Lovelace cards
+- latest recent activity associated with Gear
+- registered Garmin devices
+- recently seen ANT+/BLE sensors and battery metadata
+- a canonical Gear overview for downstream Lovelace presentation
+- shared product-picture storage for Garmin Gear and other cards
 
 It does **not** add a second Garmin login or a separate Gear polling service. Gear enrichment reuses the existing Garmin Connect session and the normal Activity/Gear coordinators.
+
+## Source model
+
+Garmin exposes several identity domains that can describe the same physical device:
+
+```text
+Garmin Gear registry     -> source = garmin_gear
+Registered Garmin device -> source = garmin_device
+Recent ANT+/BLE sensor   -> source = garmin_sensor
+```
+
+These source records are intentionally kept separate in normalized data. A source record is not discarded just because Home Assistant later presents it together with another source.
+
+Important rule: **never identify or merge a physical device from display name alone**.
+
+Garmin's recent-sensor `deviceName` is not a trustworthy physical identity. Controlled testing showed that a sensor can be renamed/reported unexpectedly while its stable identity and sensor fingerprint remain unchanged. Source linking therefore uses stable IDs/fingerprints and explicit compatibility checks, not fuzzy name matching.
 
 ## Data flow
 
 ```text
 Garmin Connect
     |
-    | normal recent activity fetch
+    | activities / gear / devices / sensors
     v
-ha-garmin Activity flow
-    |- learns activity type metadata from activityType
-    |- keeps the current recent-activity window
-    |- looks up gear attached to activities in that window
-    `- caches activity -> gear results
+ha-garmin
+    |- normalizes Gear records
+    |- normalizes registered Garmin devices
+    |- normalizes recent ANT+/BLE sensors
+    |- learns activity type metadata
+    |- keeps bounded recent activity -> Gear linkage
+    `- preserves source identities
     |
     v
-ha-garmin Gear flow
-    |- fetches gear/stats/defaults
-    |- resolves numeric default activity IDs through the registry
-    `- attaches cached latest activity metadata per gear UUID
+Home Assistant GearCoordinator
     |
     v
-Home Assistant Gear sensors
-    |- default_for_activity
-    |- default_for_activity_details
-    `- last_activity
+gear_engine.py
+    |- validates GearSourceRecord objects
+    |- classifies source records
+    |- applies only explicitly confirmed physical sensor links
+    |- preserves both original records under `sources`
+    `- publishes canonical GearItem objects
     |
     v
-Templates / Lovelace
+sensor.garmin_gear_overview_2
+    |
+    v
+Sportaffären / garmin-gear-card.js
+    `- presentation-only grouping, filtering, images and details
 ```
+
+## Confirmed physical sensor links
+
+The backend currently contains explicit confirmed links for four physical devices. These links were established from controlled live tests and are intentionally narrow.
+
+### Garmin Varia 511
+
+Garmin's recent-sensors endpoint currently exposes the Varia source with an unexpected `sensorType: HEART_RATE`. The stable sensor identity plus controlled Varia-only activity testing confirmed that this source belongs to the Varia.
+
+The physical item therefore combines:
+
+```text
+Garmin Gear: Garmin Varia 511
+ANT+/BLE source: stable Varia sensor identity
+Observed sensor metadata: HEART_RATE, 75 %, software 0.3
+```
+
+The incorrect Garmin sensor type is retained as raw source metadata; it is not rewritten to a fabricated type.
+
+### Garmin Speed Sensor 2
+
+Controlled testing confirmed the source fingerprint:
+
+```text
+sensor_type: BIKE_SPEED
+manufacturer: GARMIN
+product_id: 9
+part_number: 9
+software_version: 2.3
+```
+
+This source is linked to the Garmin Speed Sensor 2 Gear record.
+
+### Morpheus M7
+
+Controlled testing with the Morpheus worn during the activity identified the actual heart-rate source as:
+
+```text
+sensor_type: HEART_RATE
+manufacturer: FITCARE
+product_id: 5
+software_version: 0.3
+```
+
+The live verification showed `100 % / NEW` battery metadata on the merged Morpheus M7 card.
+
+### Bontrager Ion 200 RT Flare
+
+The previously confirmed `BIKE_LIGHT_MAIN` sensor source remains linked to the Bontrager Ion 200 RT Flare Gear record.
+
+### Stages Power L
+
+Stages remains **Gear-only**. Garmin associates the Stages Gear item with cycling activities, but the recent-sensors endpoint did not expose a corresponding `POWER`/`BIKE_POWER` source during controlled tests.
+
+Do not invent a Stages sensor link until Garmin exposes a source that can be identified confidently.
+
+## Backend link semantics
+
+Confirmed Gear <-> sensor links are implemented in `custom_components/garmin_connect/gear_engine.py`.
+
+When a confirmed link matches:
+
+- the canonical item uses the Gear record as the primary identity
+- both original source records are retained in `sources`
+- Gear lifecycle/status semantics win (`active`, usage/activity count)
+- sensor `last_seen_at`, battery, sensor type and related metadata are carried onto the physical item
+- `metadata.physical_link` is set to `confirmed`
+- `metadata.linked_sensor_source_id` records the linked sensor source
+- source counts remain source-based
+- item count becomes physical-item based
+
+There is an explicit regression test that two same-name records without a confirmed link remain separate.
+
+## Frontend contract
+
+The frontend should present the canonical backend data rather than reimplement sensor identity rules.
+
+`0.3.0-dev.16` removed the older hard-coded Bontrager/Morpheus sensor-association block from JavaScript. This fixed the case where the Varia sensor source was incorrectly relabelled as Morpheus in the UI after the real sensor identities had been established.
+
+The frontend may still perform conservative **presentation-only** grouping for other high-confidence physical relationships, for example a Garmin Gear record plus a registered Garmin device record representing the same Edge/Fenix hardware. Backend source traceability remains intact.
+
+For activity presentation:
+
+1. use `typeKey` for activity identity and translation
+2. use exact icon mapping where available
+3. fall back through `parentTypeId` to the broader activity family
+4. use a neutral fallback for unknown future Garmin types
+
+For `last_activity`, Gear with historical usage but no cached recent activity should be presented as **latest activity unavailable**, not as **never used**.
 
 ## Activity Type Registry
 
-Garmin Gear defaults can expose numeric activity IDs such as `25`, `32` or `152`. Showing these as `type_25`, `type_32`, etc. is not useful in the UI.
+Garmin Gear defaults can expose numeric activity IDs such as `25`, `32` or `152`. `ha-garmin` maintains a dynamic Activity Type Registry so downstream UI does not have to display opaque values such as `type_25`.
 
-`ha-garmin` therefore maintains a dynamic Activity Type Registry.
-
-Each entry contains only the stable fields needed downstream:
+Example:
 
 ```yaml
 25:
@@ -60,16 +190,9 @@ Each entry contains only the stable fields needed downstream:
   parentTypeId: 2
 ```
 
-The registry is populated in two ways:
+The registry is populated through normal recent activity data and a best-effort cached Garmin hierarchy bootstrap.
 
-1. **Free learning from normal activity data.** Recent Garmin activities already contain `activityType`, so the client learns `typeId`, `typeKey` and `parentTypeId` without an additional request.
-2. **Lazy Garmin hierarchy bootstrap.** When Gear data is fetched, the canonical Garmin activity type hierarchy is loaded as a best-effort auxiliary request. It is cached for 24 hours so old/default activity types can still be resolved even if they have not appeared in recent activities.
-
-A transient empty/error response from the auxiliary activity-type endpoint does not erase a previously good registry and does not fail the primary Activity or Gear coordinator.
-
-### Gear default output
-
-The raw numeric/default representation is converted into two downstream fields:
+Gear output exposes both a convenient string list and hierarchy-preserving details:
 
 ```yaml
 default_for_activity:
@@ -85,15 +208,15 @@ default_for_activity_details:
     parentTypeId: 2
 ```
 
-`default_for_activity` is convenient for simple consumers. `default_for_activity_details` preserves the Garmin hierarchy for richer UI behaviour such as labels, parent-family fallback and icons.
+A transient auxiliary endpoint failure must not erase a previously good registry or fail the main coordinator.
 
 ## Latest activity per Gear
 
-The latest Gear activity is derived from the **Activity flow**, not by polling each Gear item.
+Latest Gear use is derived from the Activity flow rather than by polling every Gear item.
 
-For every activity in the currently fetched recent-activity window, `ha-garmin` asks Garmin which Gear items are associated with that activity. The scan runs newest to oldest, so the first/newest matching activity becomes the latest activity for that Gear UUID.
+For activities in the bounded recent window, `ha-garmin` asks Garmin which Gear records are associated with each activity. The newest matching activity becomes the latest activity for that Gear UUID.
 
-The compact stored payload is:
+Compact payload:
 
 ```yaml
 last_activity:
@@ -109,84 +232,22 @@ last_activity:
 
 Only available values are included.
 
-### Why the Activity flow owns this
-
-A Gear item's "latest use" changes when an activity is uploaded or edited. The Activity coordinator is therefore the natural trigger.
-
-This avoids a design where every Gear item performs its own historical lookup on every refresh.
+The recent activity window is intentionally bounded. Missing `last_activity` therefore means no recent linkage was found, not necessarily that the Gear has never been used.
 
 ## Cache and request behaviour
 
-The implementation is deliberately conservative with Garmin API calls.
+The implementation is conservative with Garmin API calls:
 
-- Activity-to-Gear lookup results are cached by `activity_id`.
-- After the recent window has been primed, normal operation is approximately one additional Gear lookup when a **new activity** appears, not one lookup per Gear item per poll.
-- The newest activity is allowed up to **3 empty-result retries** because Garmin can expose the activity before its Gear association has propagated.
-- Older historical activities with an empty Gear result are treated as stable after the first lookup.
-- The per-activity cache is bounded to the same rolling recent-activity window being scanned.
-- A failed auxiliary Gear lookup does not make the Activity coordinator unavailable.
-
-## Recent-window backfill
-
-At startup/reload, the current implementation scans the recent Garmin activity window from newest to oldest and fills `last_activity` for Gear items found in that window.
-
-The current Activity fetch uses a **10-activity recent window**. This is intentionally a bounded bootstrap rather than an unbounded history scan.
-
-Consequences:
-
-- Gear used in one of the recent activities can receive an immediate historical `last_activity` after restart.
-- Gear whose last use is older than the current recent window will remain without `last_activity` until it is used again, unless a future controlled historical backfill is added.
-- This is not the same as "the Gear has never been used"; consumers should distinguish missing recent linkage from zero total activities.
-
-## Home Assistant Gear attributes
-
-Each dynamic Gear sensor exposes the existing Garmin metadata plus the enriched fields:
-
-```yaml
-gear_uuid: ...
-total_activities: 320
-gear_make_name: ...
-gear_model_name: ...
-gear_status_name: active
-custom_make_model: ...
-maximum_meters: 500000
-default_for_activity:
-  - indoor_rowing
-default_for_activity_details:
-  - typeId: 32
-    typeKey: indoor_rowing
-    parentTypeId: 29
-last_activity:
-  activity_id: 123456789
-  name: Rodd
-  type: indoor_rowing
-  type_id: 32
-  parent_type_id: 29
-  start: "2026-09-03T17:41:00+00:00"
-  distance_m: 700.0
-  duration_s: 300.0
-```
-
-`last_activity` is omitted/`None` when no matching activity has been found in the current cache/window.
-
-## Frontend contract
-
-Presentation should be based on stable semantic fields, not Garmin's numeric IDs.
-
-Recommended order:
-
-1. Use `typeKey` for activity identity and translation.
-2. Use an exact MDI icon mapping where a good match exists.
-3. Fall back through `parentTypeId` to the broader activity family.
-4. Use a neutral fallback for unknown future Garmin types.
-
-The UI should never need to display raw strings such as `type_25` when `default_for_activity_details` is available.
-
-For `last_activity`, a Gear item with historical usage but no cached recent activity should be presented as something like **"Latest activity not available"**, not **"No activity registered"**.
+- activity-to-Gear lookup results are cached by `activity_id`
+- after priming, normal operation is approximately one additional Gear lookup when a new activity appears, not one lookup per Gear item per poll
+- the newest activity may be retried when Garmin exposes the activity before its Gear association has propagated
+- older empty historical results are treated as stable
+- caches are bounded to the recent window
+- auxiliary lookup failure does not make the primary coordinator unavailable
 
 ## Shared card picture backend
 
-The picture upload/storage implementation remains in `custom_components/garmin_connect/gear_picture.py`. Garmin Gear introduced it first, but the implementation is now collection-based so other Home Assistant cards can reuse the same validated storage path without duplicating filesystem logic in JavaScript.
+The picture upload/storage implementation lives in `custom_components/garmin_connect/gear_picture.py` and is collection-based so multiple cards can reuse one validated storage implementation.
 
 Reusable WebSocket commands:
 
@@ -195,59 +256,103 @@ garmin_connect/card_picture/upload
 garmin_connect/card_picture/remove
 ```
 
-Clients provide a validated collection name and stable key. The backend maps the collection to the card-owned directory:
+Canonical directories:
 
 ```text
 garmin_gear        -> /config/www/garmin_gear_card/pictures/
 device_maintenance -> /config/www/device_maintenance_card/pictures/
 ```
 
-The public URL uses the matching `/local/<collection>_card/pictures/` prefix.
+The retired `/config/www/gear_pictures/` path is no longer used.
 
-The legacy Garmin Gear WebSocket command names remain as thin compatibility wrappers around the same generic implementation. Garmin Gear picture storage is now canonical under `/config/www/garmin_gear_card/pictures/`; the retired `/config/www/gear_pictures/` path is no longer read, written, or cleaned by the backend. After live verification of `0.3.0-dev.14`, the old local `/config/www/gear_pictures/` directory was removed from Home Assistant as well.
-
-The backend preserves the original Gear validation rules:
+Validation rules remain:
 
 - JPEG, PNG and WebP only
 - maximum 5 MB decoded image size
-- minimal magic-byte validation
+- image signature validation
 - deterministic safe filename slugging
 - atomic temporary-file replace
-- cleanup of stale extension variants when a picture is replaced
+- stale-extension cleanup when a picture is replaced
 - admin requirement on WebSocket commands
 
-The JavaScript frontends are responsible only for file selection, transport encoding and presentation. They do not write to the Home Assistant filesystem.
-
-Browser-side image probes use a cache-busting query parameter because a browser can otherwise retain a previous 404 for a picture that did not exist before the first upload.
-
-The shared backend was live-tested on 2026-09-06 with both Garmin Gear and Device Maintenance.
+Product images were live-verified after the sensor-link update and can be assigned to the newly resolved physical devices.
 
 ## Current implementation references
 
 `ha-garmin`:
 
+- `src/ha_garmin/client.py`
+- `src/ha_garmin/gear.py`
 - `src/ha_garmin/activity_types.py`
-- `tests/test_activity_types.py`
 
 Home Assistant integration:
 
 - `custom_components/garmin_connect/coordinator.py`
-- `custom_components/garmin_connect/sensor.py`
+- `custom_components/garmin_connect/gear_engine.py`
+- `custom_components/garmin_connect/gear_sensor.py`
 - `custom_components/garmin_connect/gear_picture.py`
+- `tests/test_gear_engine.py`
 - `tests/test_gear_picture.py`
 
-Release line used while this work is being validated:
+Frontend:
 
-- `ha-garmin` 0.1.38 code line
-- Garmin Connect `3.0.18-fitness-probe.8`
+- `Jocke1970/HA_Garaget`
+- `homeassistant/www/garmin_gear_card/garmin-gear-card.js`
+
+Current validation line:
+
+- Home Assistant integration `3.0.33-gear-links-v1`
+- frontend `0.3.0-dev.16`
+- `ha-garmin` pinned by exact commit from the integration manifest
+
+## Branch policy
+
+For the Home Assistant integration, `feature/garmin-fitness` is the canonical development line. Short-lived `fix/*` and feature branches should be merged back and removed when complete. `feature/garmin-insights-audit` remains intentionally separate while audit work is active.
+
+The Gear sensor-link fix must therefore land on `feature/garmin-fitness` before a test release is created. This policy was reinforced after an earlier Gear-link change was temporarily merged only into a side branch and was therefore absent from later Fitness releases.
+
+## Next milestone: supervised sensor linking
+
+The current explicit links are safe but do not scale well: each newly discovered physical relationship currently requires a code change and release.
+
+The planned next Gear milestone is **supervised sensor linking**:
+
+```text
+new Garmin sensor source
+        |
+        v
+unlinked sensor in UI
+        |
+        v
+backend proposes likely Gear matches
+        |
+        v
+user confirms the physical link
+        |
+        v
+association is persisted locally in Home Assistant
+        |
+        v
+future refreshes build one physical item without another code release
+```
+
+Expected matching evidence includes stable sensor identity, compatible sensor type/manufacturer/product metadata, and activity-time correlation. `deviceName` alone must never be sufficient.
+
+The system should also support a standalone physical sensor when no matching Garmin Gear record exists, and allow a persisted link to be removed/replaced explicitly.
+
+This is a planned milestone, not current functionality.
 
 ## Design decisions
 
 The following decisions are intentional:
 
-- Activity types are learned dynamically instead of maintaining a static Garmin numeric-ID table.
-- Swedish/localised labels and MDI icons belong to presentation, not the Garmin API client.
-- Latest Gear use is activity-driven instead of Gear-polled.
-- Auxiliary enrichment failures must not break primary Garmin data.
-- Bootstrap/backfill is bounded; API friendliness is preferred over exhaustive historical scanning.
-- Card picture persistence is implemented once in `gear_picture.py`; custom-card JavaScript must not duplicate filesystem/storage logic.
+- preserve Garmin source identities even when presenting one physical item
+- never auto-merge by display name alone
+- explicit/confirmed identity evidence wins over mutable `deviceName`
+- Gear semantics win lifecycle/activity state for Gear <-> sensor physical items
+- Swedish/localized labels and icons belong to presentation, not the Garmin API client
+- latest Gear use is activity-driven instead of Gear-polled
+- auxiliary enrichment failures must not break primary Garmin data
+- bounded bootstrap/backfill is preferred over exhaustive history polling
+- card picture persistence is implemented once in `gear_picture.py`
+- future unknown physical links should move toward supervised persisted linking rather than more hard-coded account-specific rules
