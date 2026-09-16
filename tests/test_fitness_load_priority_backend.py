@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from ha_garmin.fitness.models import ActivityMetrics
 from homeassistant.core import SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 
@@ -17,7 +18,6 @@ from custom_components.garmin_connect.fitness_service import (
     async_setup_fitness_probe_service,
     async_unload_fitness_probe_service,
 )
-from ha_garmin.fitness.models import ActivityMetrics
 
 
 def _activity(activity_id: int, sport: str, **changes: object) -> ActivityMetrics:
