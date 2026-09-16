@@ -1,0 +1,170 @@
+# Garmin Fitness – complete daily budget card for dev.
+# Supports the old budget sensor without Load Priority fields.
+type: custom:button-card
+entity: sensor.garmin_fitness_garmin_daily_load_budget
+show_icon: true
+show_name: true
+show_label: true
+show_state: false
+icon: mdi:gauge
+name: Dagens träningsbudget
+label: |
+  [[[
+    const a = entity?.attributes || {};
+    const valid = v => v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v));
+    const remaining = valid(a.remaining_load) ? Number(a.remaining_load) :
+      (valid(entity?.state) ? Number(entity.state) : null);
+    if (remaining === null) return 'Väntar på en aktuell träningsbudget';
+    if (remaining <= 0) return 'Träningsbudgeten är uppnådd – lätt aktivitet bedöms separat';
+    return `${remaining.toFixed(1).replace('.', ',')} TRIMP kvar för träning`;
+  ]]]
+custom_fields:
+  values: |
+    [[[
+      const a = entity?.attributes || {};
+      const valid = v => v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v));
+      const consuming = valid(a.budget_consuming_load) ? Number(a.budget_consuming_load) :
+        (valid(a.current_load) ? Number(a.current_load) : null);
+      const maximum = valid(a.recommended_max_load) ? Math.max(consuming ?? 0, Number(a.recommended_max_load)) : null;
+      const fmt = v => v === null ? '–' : v.toFixed(1).replace('.', ',');
+      return `<div class="budget-values"><span>${fmt(consuming)} TRIMP</span><span>${fmt(maximum)} TRIMP</span></div>`;
+    ]]]
+  progress: |
+    [[[
+      const a = entity?.attributes || {};
+      const valid = v => v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v));
+      const current = valid(a.budget_consuming_load) ? Number(a.budget_consuming_load) :
+        (valid(a.current_load) ? Number(a.current_load) : null);
+      const max = valid(a.recommended_max_load) ? Math.max(current ?? 0, Number(a.recommended_max_load)) : null;
+      const pct = current !== null && max !== null && max > 0 ?
+        Math.max(0, Math.min(100, current / max * 100)) : 0;
+      const remaining = valid(a.remaining_load) ? Number(a.remaining_load) : null;
+      const color = remaining === null ? 'var(--disabled-text-color)' :
+        (remaining <= 0 ? 'rgb(255, 152, 0)' : 'rgb(0, 188, 235)');
+      return `<div class="budget-track"><div class="budget-fill" style="width:${pct}%;background:${color}"></div></div>`;
+    ]]]
+  breakdown: |
+    [[[
+      const a = entity?.attributes || {};
+      if (a.planning_mode !== 'load_priority') return '';
+      const valid = v => v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v));
+      if (![a.canonical_current_load, a.budget_consuming_load, a.excluded_low_intensity_load].every(valid)) return '';
+      const fmt = v => Number(v).toFixed(1).replace('.', ',');
+      const unknown = valid(a.unknown_intensity_activity_count) ? Number(a.unknown_intensity_activity_count) : 0;
+      return `
+        <div class="budget-breakdown-heading">Belastning i dag</div>
+        <div class="budget-breakdown-grid">
+          <div><span>Faktisk (TRIMP)</span><b>${fmt(a.canonical_current_load)}</b></div>
+          <div><span>Budgeträknad</span><b>${fmt(a.budget_consuming_load)}</b></div>
+          <div><span>Lågintensivt</span><b>${fmt(a.excluded_low_intensity_load)}</b></div>
+        </div>
+        ${unknown > 0 ? `<div class="budget-caution">${unknown} pass saknar säker intensitetsklassning och har inte undantagits automatiskt.</div>` : ''}
+      `;
+    ]]]
+  limiter: |
+    [[[
+      const a = entity?.attributes || {};
+      const valid = v => v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v));
+      const structural = valid(a.structural_remaining_load) ? Number(a.structural_remaining_load) : null;
+      const factor = structural !== null && structural <= 0 ?
+        (a.structural_limiting_factor_label || a.structural_limiting_factor) :
+        (a.limiting_factor_label || a.limiting_factor);
+      const label = factor ? `Begränsas av <b>${String(factor).replace(/</g, '&lt;')}</b>` : 'Inväntar begränsande faktor';
+      const note = a.planning_mode === 'load_priority' ?
+        '<div class="budget-context">Budgeten avser träningsbelastning; tydligt lågintensiva pass kan undantas från förbrukningen.</div>' : '';
+      return `<div class="limiter">${label}${note}</div>`;
+    ]]]
+  metrics: |
+    [[[
+      const a = entity?.attributes || {};
+      const fmt = (v, n = 1) => v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v)) ?
+        Number(v).toFixed(n).replace('.', ',') : '–';
+      const tsb = a.projected_tsb != null && Number.isFinite(Number(a.projected_tsb)) ?
+        `${Number(a.projected_tsb) >= 0 ? '+' : ''}${fmt(a.projected_tsb)}` : '–';
+      return `<div class="budget-metrics">
+        <div><span>ACWR</span><b>${fmt(a.projected_acwr, 2)}</b></div>
+        <div><span>Strain</span><b>${fmt(a.projected_strain)}</b></div>
+        <div><span>TSB</span><b>${tsb}</b></div>
+        <div><span>Ramp</span><b>${fmt(a.projected_ramp_rate)}</b></div>
+      </div>`;
+    ]]]
+styles:
+  card:
+    - padding: 12px
+    - margin-top: 8px
+  grid:
+    - grid-template-areas: |
+        "i n"
+        "i l"
+        "values values"
+        "progress progress"
+        "breakdown breakdown"
+        "limiter limiter"
+        "metrics metrics"
+    - grid-template-columns: 54px 1fr
+    - grid-template-rows: min-content min-content min-content min-content min-content min-content min-content
+    - column-gap: 10px
+  icon:
+    - width: 29px
+    - height: 29px
+    - color: |
+        [[[
+          const remaining = Number(entity?.attributes?.remaining_load);
+          return Number.isFinite(remaining) && remaining <= 0 ? 'rgb(255, 152, 0)' : 'rgb(0, 188, 235)';
+        ]]]
+  img_cell:
+    - width: 48px
+    - height: 48px
+    - border-radius: 50%
+    - background: |
+        [[[
+          const remaining = Number(entity?.attributes?.remaining_load);
+          return Number.isFinite(remaining) && remaining <= 0 ? 'rgba(255, 152, 0, 0.15)' : 'rgba(0, 188, 235, 0.16)';
+        ]]]
+  name:
+    - justify-self: start
+    - font-size: 15px
+    - font-weight: 600
+  label:
+    - justify-self: start
+    - font-size: 12px
+    - color: var(--secondary-text-color)
+  custom_fields:
+    values:
+      - margin-top: 14px
+    progress:
+      - margin-top: 4px
+    breakdown:
+      - display: |
+          [[[
+            const a = entity?.attributes || {};
+            const valid = v => v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v));
+            return a.planning_mode === 'load_priority' &&
+              [a.canonical_current_load, a.budget_consuming_load, a.excluded_low_intensity_load].every(valid)
+              ? 'block' : 'none';
+          ]]]
+      - margin-top: 10px
+      - text-align: left
+      - white-space: normal
+    limiter:
+      - margin-top: 7px
+      - text-align: left
+    metrics:
+      - margin-top: 12px
+extra_styles: |
+  .budget-values { display:flex; justify-content:space-between; font-size:12px; color:var(--secondary-text-color); }
+  .budget-track { height:8px; width:100%; border-radius:99px; background:rgba(128,128,128,0.22); overflow:hidden; }
+  .budget-fill { height:100%; border-radius:99px; }
+  .limiter { font-size:13px; color:var(--secondary-text-color); }
+  .limiter b { color:var(--primary-text-color); }
+  .budget-context { margin-top:5px; font-size:11px; line-height:1.35; }
+  .budget-breakdown-heading { font-size:11px; font-weight:600; margin-bottom:5px; }
+  .budget-breakdown-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:5px; }
+  .budget-breakdown-grid div { min-width:0; }
+  .budget-breakdown-grid span { display:block; color:var(--secondary-text-color); font-size:10px; }
+  .budget-breakdown-grid b { display:block; font-size:13px; margin-top:2px; }
+  .budget-caution { font-size:11px; color:var(--secondary-text-color); margin-top:5px; line-height:1.35; }
+  .budget-metrics { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; }
+  .budget-metrics div { text-align:center; }
+  .budget-metrics span { display:block; font-size:10px; color:var(--secondary-text-color); }
+  .budget-metrics b { display:block; margin-top:2px; font-size:14px; font-weight:600; }

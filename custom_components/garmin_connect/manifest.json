@@ -1,6 +1,9 @@
 {
   "domain": "garmin_connect",
   "name": "Garmin Connect",
+  "after_dependencies": [
+    "recorder"
+  ],
   "codeowners": [
     "@cyberjunky"
   ],
@@ -14,7 +17,7 @@
   ],
   "quality_scale": "gold",
   "requirements": [
-    "ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@997fa7f600652bbc0c452b421eaffb5f4ba54203"
+    "ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@10117accc105961e027c368fe8aca42c7c83cec8"
   ],
-  "version": "3.0.17"
+  "version": "3.0.35-dev.1"
 }

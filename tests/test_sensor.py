@@ -3,6 +3,9 @@
 import json
 from unittest.mock import MagicMock, patch
 
+from homeassistant.components.sensor import SensorDeviceClass
+from homeassistant.const import UnitOfTime
+
 from custom_components.garmin_connect.sensor import (
     _COORDINATOR_SENSOR_MAP,
     ACTIVITY_TRACKING_SENSORS,
@@ -14,9 +17,14 @@ from custom_components.garmin_connect.sensor import (
     NUTRITION_SENSORS,
     TRAINING_SENSORS,
     CoordinatorType,
+    GarminConnectAccessoryBatterySensor,
+    GarminConnectDeviceBatterySensor,
     GarminConnectGearSensor,
     GarminConnectSensor,
     GarminConnectSensorEntityDescription,
+    _accessory_identity,
+    _match_accessory_gear,
+    _registered_device_identity,
 )
 
 from .conftest import (
@@ -512,7 +520,9 @@ def test_menstrual_cycle_start_returns_date_object() -> None:
     assert sensor.native_value == datetime.date.fromisoformat("2026-01-20")
 
 
-def test_menstrual_fertile_window_start_returns_none_when_fertile_window_start_is_less_than_or_zero() -> None:
+def test_menstrual_fertile_window_start_returns_none_when_fertile_window_start_is_less_than_or_zero() -> (
+    None
+):
     """Menstrual fertile window start sensor must return None when fertileWindowStart <= 0"""
     desc = next(d for d in MENSTRUAL_CYCLE_SENSORS if d.key == "menstrualFertileWindowStart")
     coord = MagicMock()
@@ -531,7 +541,7 @@ def test_menstrual_fertile_window_start_returns_none_when_fertile_window_start_i
                 "fertileWindowStart": 0,
                 "lutealPhaseStart": 12,
                 "cycleType": "REGULAR",
-                "predictedCycle": False
+                "predictedCycle": False,
             }
         }
     }
@@ -568,7 +578,9 @@ def test_menstrual_fertile_window_end_returns_none_when_missing() -> None:
     assert sensor.native_value is None
 
 
-def test_menstrual_fertile_window_end_returns_none_when_fertile_window_start_is_less_than_or_zero() -> None:
+def test_menstrual_fertile_window_end_returns_none_when_fertile_window_start_is_less_than_or_zero() -> (
+    None
+):
     """Menstrual fertile window end sensor must return None when fertileWindowStart <= 0."""
     desc = next(d for d in MENSTRUAL_CYCLE_SENSORS if d.key == "menstrualFertileWindowEnd")
     coord = MagicMock()
@@ -587,7 +599,7 @@ def test_menstrual_fertile_window_end_returns_none_when_fertile_window_start_is_
                 "fertileWindowStart": 0,
                 "lutealPhaseStart": 12,
                 "cycleType": "REGULAR",
-                "predictedCycle": False
+                "predictedCycle": False,
             }
         }
     }
@@ -595,7 +607,9 @@ def test_menstrual_fertile_window_end_returns_none_when_fertile_window_start_is_
     assert sensor.native_value is None
 
 
-def test_menstrual_fertile_window_end_returns_none_when_length_of_fertile_window_is_less_than_or_zero() -> None:
+def test_menstrual_fertile_window_end_returns_none_when_length_of_fertile_window_is_less_than_or_zero() -> (
+    None
+):
     """Menstrual fertile window end sensor must return None when lengthOfFertileWindow <= 0."""
     desc = next(d for d in MENSTRUAL_CYCLE_SENSORS if d.key == "menstrualFertileWindowEnd")
     coord = MagicMock()
@@ -614,7 +628,7 @@ def test_menstrual_fertile_window_end_returns_none_when_length_of_fertile_window
                 "fertileWindowStart": 5,
                 "lutealPhaseStart": 12,
                 "cycleType": "REGULAR",
-                "predictedCycle": False
+                "predictedCycle": False,
             }
         }
     }
@@ -655,10 +669,10 @@ def test_menstrual_next_predicted_cycle_start_returns_none_when_missing(mock_dat
                 "educationContentMod": 11,
                 "lutealPhaseStart": 12,
                 "cycleType": "REGULAR",
-                "predictedCycle": False
+                "predictedCycle": False,
             }
         },
-         "menstrualCalendar": {
+        "menstrualCalendar": {
             "cycleSummaries": [
                 {
                     "startDate": "2026-11-29",
@@ -666,10 +680,10 @@ def test_menstrual_next_predicted_cycle_start_returns_none_when_missing(mock_dat
                     "fertileWindowStart": 9,
                     "lengthOfFertileWindow": 5,
                     "educationContentMod": 9,
-                    "predictedCycle": False
+                    "predictedCycle": False,
                 }
             ]
-        }
+        },
     }
     sensor = GarminConnectSensor(coord, desc, "entry_id")
     assert sensor.native_value is None
@@ -685,7 +699,9 @@ def test_menstrual_next_predicted_cycle_start_returns_none_when_present_and_in_t
 
 
 @patch("custom_components.garmin_connect.sensor.dt_date")
-def test_menstrual_next_predicted_cycle_start_returns_date_object_when_present_and_in_future(mock_date) -> None:
+def test_menstrual_next_predicted_cycle_start_returns_date_object_when_present_and_in_future(
+    mock_date,
+) -> None:
     """Menstrual next predicted cycle start sensor must return first predicted cycle >= today as date object."""
     import datetime
 
@@ -715,7 +731,7 @@ def test_menstrual_cycle_day_attributes_return_empty_when_missing() -> None:
                 "educationContentMod": 11,
                 "lutealPhaseStart": 12,
                 "cycleType": "REGULAR",
-                "predictedCycle": False
+                "predictedCycle": False,
             }
         }
     }
@@ -756,6 +772,154 @@ def test_menstrual_cycle_phase_attributes_are_populated() -> None:
     assert attrs["cycle_type"] == "REGULAR"
 
 
+# ── GarminConnectDeviceBatterySensor ─────────────────────────────────────────
+
+
+def _registered_device_battery_data() -> dict:
+    return {
+        "devices": [
+            {
+                "deviceId": 12345,
+                "displayName": "fenix 7 Pro Sapphire Solar",
+                "productDisplayName": "fenix 7 Pro Sapphire Solar",
+                "batteryLevel": 64,
+                "batteryStatus": "GOOD",
+                "deviceStatus": "ACTIVE",
+                "currentFirmwareVersion": "25.12",
+                "applicationKey": "fenix7pro",
+            }
+        ]
+    }
+
+
+def test_registered_device_battery_level_entity() -> None:
+    coord = MagicMock()
+    coord.data = _registered_device_battery_data()
+    key = _registered_device_identity(coord.data["devices"][0])
+    sensor = GarminConnectDeviceBatterySensor(
+        coord, device_key=key, kind="level", entry_id="eid"
+    )
+
+    assert sensor.native_value == 64
+    assert sensor.native_unit_of_measurement == "%"
+    assert sensor.device_class == SensorDeviceClass.BATTERY
+    assert sensor.extra_state_attributes["battery_status"] == "GOOD"
+
+
+def test_registered_device_battery_status_entity() -> None:
+    coord = MagicMock()
+    coord.data = _registered_device_battery_data()
+    key = _registered_device_identity(coord.data["devices"][0])
+    sensor = GarminConnectDeviceBatterySensor(
+        coord, device_key=key, kind="status", entry_id="eid"
+    )
+
+    assert sensor.native_value == "GOOD"
+    assert sensor.native_unit_of_measurement is None
+    assert sensor._attr_device_info["name"] == "fenix 7 Pro Sapphire Solar"
+    assert sensor._attr_device_info["sw_version"] == "25.12"
+
+
+# ── GarminConnectAccessoryBatterySensor ──────────────────────────────────────
+
+
+def _bontrager_accessory_data() -> dict:
+    return {
+        "sensors": [
+            {
+                "sensorType": "BIKE_LIGHT_MAIN",
+                "serialNumber": "bontrager-secret-serial",
+                "batteryLevel": None,
+                "batteryStatus": "OK",
+                "lastConnected": "2026-09-05T12:51:00+00:00",
+                "softwareVersion": "1.2",
+            }
+        ],
+        "gearStats": [
+            {
+                "uuid": "chain",
+                "status": "ACTIVE",
+                "gearType": "BIKE_COMPONENT",
+                "usageType": "DISTANCE",
+                "brand": "Shimano",
+                "model": "CN-HG701",
+            },
+            {
+                "uuid": "bontrager",
+                "status": "ACTIVE",
+                "gearType": "BIKE_COMPONENT",
+                "usageType": "DURATION",
+                "brand": "Bontrager",
+                "model": "Ion 200 RT Flare",
+            },
+        ],
+    }
+
+
+def test_accessory_bike_light_matches_unique_duration_bike_component() -> None:
+    """BIKE_LIGHT_MAIN enriches only from one unambiguous active Gear candidate."""
+    data = _bontrager_accessory_data()
+    gear = _match_accessory_gear(data["sensors"][0], data)
+    assert gear is not None
+    assert gear["uuid"] == "bontrager"
+    assert gear["brand"] == "Bontrager"
+    assert gear["model"] == "Ion 200 RT Flare"
+
+
+def test_accessory_identity_hashes_serial_number() -> None:
+    """Accessory unique identity must be stable without exposing the serial."""
+    accessory = _bontrager_accessory_data()["sensors"][0]
+    key = _accessory_identity(accessory)
+    assert key == _accessory_identity(accessory)
+    assert "bontrager-secret-serial" not in key
+    assert len(key) == 16
+
+
+def test_accessory_status_entity_uses_gear_brand_and_model() -> None:
+    """Status-only bike light gets Bontrager Gear metadata without invented percent."""
+    coord = MagicMock()
+    coord.data = _bontrager_accessory_data()
+    key = _accessory_identity(coord.data["sensors"][0])
+    sensor = GarminConnectAccessoryBatterySensor(
+        coord, accessory_key=key, kind="status", entry_id="eid"
+    )
+
+    assert sensor.native_value == "OK"
+    assert sensor.native_unit_of_measurement is None
+    assert sensor.device_class is None
+    assert sensor._attr_device_info["name"] == "Bontrager Ion 200 RT Flare"
+    assert sensor._attr_device_info["manufacturer"] == "Bontrager"
+    assert sensor._attr_device_info["model"] == "Ion 200 RT Flare"
+    assert sensor.extra_state_attributes["gear_uuid"] == "bontrager"
+    assert "serialNumber" not in sensor.extra_state_attributes
+
+
+def test_accessory_percentage_entity_is_real_battery_sensor() -> None:
+    """Battery percentage becomes a normal HA battery measurement entity."""
+    coord = MagicMock()
+    coord.data = {
+        "sensors": [
+            {
+                "sensorType": "HEART_RATE",
+                "serialNumber": "hr-secret-serial",
+                "batteryLevel": 75,
+                "batteryStatus": "OK",
+            }
+        ],
+        "gearStats": [],
+    }
+    key = _accessory_identity(coord.data["sensors"][0])
+    sensor = GarminConnectAccessoryBatterySensor(
+        coord, accessory_key=key, kind="level", entry_id="eid"
+    )
+
+    assert sensor.native_value == 75
+    assert sensor.native_unit_of_measurement == "%"
+    assert sensor.device_class == SensorDeviceClass.BATTERY
+    assert sensor.extra_state_attributes["battery_status"] == "OK"
+    assert "hr-secret-serial" not in sensor._attr_unique_id
+
+
 # ── GarminConnectGearSensor ───────────────────────────────────────────────────
 
 
@@ -763,6 +927,7 @@ def test_gear_sensor_returns_total_distance() -> None:
     """Gear sensor native_value must be totalDistance for its UUID."""
     coord = MagicMock()
     coord.data = mock_gear_data()
+    coord.data["gearStats"][0]["usageType"] = "DISTANCE"
     sensor = GarminConnectGearSensor(
         coord, gear_uuid="gear-uuid-1", gear_name="Running Shoes", entry_id="eid"
     )
@@ -844,15 +1009,12 @@ def test_gear_sensor_unique_id_unnamed_gear_no_collision() -> None:
 
 def _route_sensor(points: int) -> GarminConnectSensor:
     """Build the real lastActivityRoute sensor over a polyline of N points."""
-    description = next(
-        d for d in ACTIVITY_TRACKING_SENSORS if d.key == "lastActivityRoute"
-    )
+    description = next(d for d in ACTIVITY_TRACKING_SENSORS if d.key == "lastActivityRoute")
     coord = MagicMock()
     coord.data = {
         "lastActivity": {
             "polyline": [
-                {"lat": 19.4326 + i / 100000, "lon": -99.1332 + i / 100000}
-                for i in range(points)
+                {"lat": 19.4326 + i / 100000, "lon": -99.1332 + i / 100000} for i in range(points)
             ],
             "hasPolyline": True,
             "activityName": "Morning Ride",
@@ -869,9 +1031,7 @@ def _recorded_attributes(sensor: GarminConnectSensor) -> bytes:
 
     # Mirrors Entity.async_internal_added_to_hass, which publishes the union of the
     # component-level and entity-level unrecorded attributes onto the state.
-    unrecorded = (
-        sensor._entity_component_unrecorded_attributes | sensor._unrecorded_attributes
-    )
+    unrecorded = sensor._entity_component_unrecorded_attributes | sensor._unrecorded_attributes
     state = State(
         "sensor.garmin_connect_last_activity_route",
         str(sensor.native_value),
@@ -919,3 +1079,69 @@ def test_route_polyline_remains_available_live() -> None:
 
     assert len(sensor.extra_state_attributes["polyline"]) == 10
     assert sensor.native_value == 10
+
+
+def test_gear_sensor_duration_mode_uses_hours() -> None:
+    """DURATION Gear uses Garmin durationUsedSeconds as the sensor state."""
+    coord = MagicMock()
+    coord.data = {
+        "gearStats": [
+            {
+                "uuid": "headwind",
+                "usageType": "DURATION",
+                "durationUsedSeconds": 489499,
+                "distanceUsedMeters": 3240848.9,
+                "totalActivities": 224,
+            }
+        ]
+    }
+    gear_sensor = GarminConnectGearSensor(
+        coord, gear_uuid="headwind", gear_name="Wahoo Headwind", entry_id="eid"
+    )
+
+    assert gear_sensor.native_value == 135.97
+    assert gear_sensor.native_unit_of_measurement == UnitOfTime.HOURS
+    assert gear_sensor.device_class == SensorDeviceClass.DURATION
+
+
+def test_gear_sensor_v2_attributes() -> None:
+    """Gear v2 taxonomy and usage metadata are exposed to HA consumers."""
+    coord = MagicMock()
+    coord.data = {
+        "gearStats": [
+            {
+                "uuid": "chain",
+                "gearName": "Kedja",
+                "gearType": "BIKE_COMPONENT",
+                "gearTypeName": "Other",
+                "brand": "Shimano",
+                "model": "CN-HG701",
+                "usageType": "DISTANCE",
+                "distanceUsedMeters": 12345.0,
+                "durationUsedSeconds": 3600,
+                "daysUsed": 12,
+                "totalActivities": 10,
+                "associatedActivityTypes": [
+                    {
+                        "activityTypeKey": "indoor_cycling",
+                        "defaultGear": True,
+                        "preferredGear": False,
+                    }
+                ],
+            }
+        ]
+    }
+    gear_sensor = GarminConnectGearSensor(
+        coord, gear_uuid="chain", gear_name="Kedja", entry_id="eid"
+    )
+
+    attrs = gear_sensor.extra_state_attributes
+    assert attrs["gear_name"] == "Kedja"
+    assert attrs["gear_type"] == "BIKE_COMPONENT"
+    assert attrs["gear_brand"] == "Shimano"
+    assert attrs["gear_model"] == "CN-HG701"
+    assert attrs["usage_type"] == "DISTANCE"
+    assert attrs["distance_used_meters"] == 12345.0
+    assert attrs["duration_used_hours"] == 1.0
+    assert attrs["days_used"] == 12
+    assert attrs["associated_activity_types"][0]["activityTypeKey"] == "indoor_cycling"

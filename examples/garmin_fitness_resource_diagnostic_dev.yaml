@@ -1,0 +1,27 @@
+# Independent diagnostic: place directly before custom:garmin-fitness-card.
+# Shows the ACTUAL registered JS version, even when the graph card fails.
+type: custom:button-card
+name: Garmin Fitness - resursdiagnostik
+show_name: false
+show_icon: false
+show_state: false
+show_label: true
+label: |
+  [[[
+    const cls = typeof customElements !== 'undefined' ? customElements.get('garmin-fitness-card') : null;
+    if (!cls) return 'Grafkortets JavaScript är inte registrerat. Kontrollera resursen /local/garmin-fitness-card.js?v=0.1.6-dev.1 och ladda om HA.';
+    const version = cls.prototype?.cardVersion;
+    if (version === '0.1.6-dev.1') return `Grafkortets JavaScript är inläst: v${version}`;
+    return `Fel eller äldre grafkort är laddat: ${version ? 'v' + version : 'version okänd'}. Förväntad: v0.1.6-dev.1.`;
+  ]]]
+styles:
+  card:
+    - padding: 8px 12px
+    - background: var(--card-background-color)
+    - border: 1px solid var(--divider-color)
+    - box-shadow: none
+  label:
+    - white-space: normal
+    - text-align: left
+    - font-size: 11px
+    - color: var(--secondary-text-color)

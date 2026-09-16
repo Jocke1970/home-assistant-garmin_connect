@@ -12,14 +12,21 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
+from .activity_evaluation_coordinator import ActivityEvaluationCoordinator
+from .activity_evaluation_sensor import async_add_activity_evaluation_sensor_entities
 from .const import (
+    ACTIVITY_EVALUATION_DATA_KEY,
     CONF_CLIENT_ID,
+    CONF_FITNESS_MAX_HR,
+    CONF_FITNESS_SEX,
     CONF_IS_CN,
     CONF_REFRESH_TOKEN,
     CONF_SCAN_INTERVAL,
     CONF_TOKEN,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    FITNESS_DATA_KEY,
+    INSIGHTS_DATA_KEY,
 )
 from .coordinator import (
     ActivityCoordinator,
@@ -34,11 +41,22 @@ from .coordinator import (
     NutritionCoordinator,
     TrainingCoordinator,
 )
+from .fitness_coordinator import FitnessCoordinator
+from .fitness_sensor import async_add_fitness_sensor_entities
+from .fitness_service import (
+    async_setup_fitness_probe_service,
+    async_unload_fitness_probe_service,
+)
+from .fitness_statistics import async_backfill_fitness_statistics
+from .gear_picture import async_setup_gear_picture_websocket
+from .gear_sensor import async_add_gear_sensor_entities
+from .insights_coordinator import InsightsCoordinator
+from .insights_sensor import async_add_insights_sensor_entities
 from .services import async_setup_services, async_unload_services
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.SENSOR]
+PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.SELECT]
 
 # Mapping of old sensor keys (v1) to new sensor keys (v2).
 # Keys present in both versions are migrated by unique_id prefix only.
@@ -106,7 +124,7 @@ def _migrate_entity_unique_ids(
     entry: GarminConnectConfigEntry,
     old_prefix: str,
 ) -> None:
-    """Rewrite entity unique_ids from v1 (email_key) to v2 (entry_id_key).
+    """Rewrite entity unique_ids from v1 (email_key) to v2 (entry_id prefix).
 
     Also applies key renames so the entity registry keeps existing entity_ids
     intact (e.g. sensor.total_steps stays sensor.total_steps).
@@ -185,16 +203,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: GarminConnectConfigEntry
         menstrual=MenstrualCoordinator(hass, entry, client, auth),
         nutrition=NutritionCoordinator(hass, entry, client, auth),
     )
+    fitness = FitnessCoordinator(hass, entry, client)
+    activity_evaluation = ActivityEvaluationCoordinator(
+        hass,
+        entry,
+        client,
+        fitness,
+        coordinators.body,
+    )
+    insights = InsightsCoordinator(hass, entry, client, fitness)
 
     try:
         await coordinators.core.async_config_entry_first_refresh()
     except asyncio.CancelledError as err:
         raise ConfigEntryNotReady("Garmin API timed out during setup; will retry") from err
 
-    # Activity owns the event that teaches the shared client which gear was used
-    # most recently. Prime it before Gear so last_activity is available on the
-    # very first Gear refresh after Home Assistant starts. Keep it best-effort,
-    # matching the previous parallel-refresh behaviour.
+    # Activity teaches the shared client which gear was used most recently.
+    # Prime it before Gear so last_activity is available on the first Gear
+    # refresh after Home Assistant starts. Keep it best-effort, matching the
+    # previous parallel-refresh behaviour.
     await asyncio.gather(
         coordinators.activity.async_refresh(),
         return_exceptions=True,
@@ -208,19 +235,51 @@ async def async_setup_entry(hass: HomeAssistant, entry: GarminConnectConfigEntry
         coordinators.blood_pressure.async_refresh(),
         coordinators.menstrual.async_refresh(),
         coordinators.nutrition.async_refresh(),
+        fitness.async_refresh(),
         return_exceptions=True,
     )
+    await activity_evaluation.async_refresh()
+    await insights.async_refresh()
 
     entry.runtime_data = coordinators
 
     # Snapshot options so the update listener can tell what changed.
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = dict(entry.options)
+    hass.data.setdefault(FITNESS_DATA_KEY, {})[entry.entry_id] = fitness
+    hass.data.setdefault(ACTIVITY_EVALUATION_DATA_KEY, {})[
+        entry.entry_id
+    ] = activity_evaluation
+    hass.data.setdefault(INSIGHTS_DATA_KEY, {})[entry.entry_id] = insights
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    await async_add_fitness_sensor_entities(hass, entry, fitness)
+    await async_add_gear_sensor_entities(hass, entry, coordinators.gear)
+    await async_add_insights_sensor_entities(hass, entry, insights)
+    await async_add_activity_evaluation_sensor_entities(
+        hass,
+        entry,
+        activity_evaluation,
+    )
+    async_setup_gear_picture_websocket(hass)
+    async_backfill_fitness_statistics(hass, entry.entry_id, fitness.data or {})
 
     if not hass.services.has_service(DOMAIN, "set_active_gear"):
         await async_setup_services(hass)
+    await async_setup_fitness_probe_service(hass)
 
+    def _schedule_fitness_dependents_refresh() -> None:
+        hass.async_create_task(insights.async_request_refresh())
+        hass.async_create_task(activity_evaluation.async_request_refresh())
+
+    def _schedule_activity_evaluation_refresh() -> None:
+        hass.async_create_task(activity_evaluation.async_request_refresh())
+
+    entry.async_on_unload(
+        fitness.async_add_listener(_schedule_fitness_dependents_refresh)
+    )
+    entry.async_on_unload(
+        coordinators.body.async_add_listener(_schedule_activity_evaluation_refresh)
+    )
     entry.async_on_unload(entry.add_update_listener(async_options_update_listener))
 
     return True
@@ -231,15 +290,16 @@ async def async_options_update_listener(
 ) -> None:
     """Handle options update.
 
-    Update coordinator scan intervals directly when only the scan_interval
-    changed. Reload the config entry when the China region option changes,
-    since that affects the underlying API endpoints.
+    Update coordinator scan intervals directly when only the scan interval
+    changed. Reload the config entry when region or Fitness profile inputs
+    change because both are constructor-level settings.
     """
     coordinators = entry.runtime_data
     previous_options = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
     current_options = entry.options
 
-    if previous_options.get(CONF_IS_CN, False) != current_options.get(CONF_IS_CN, False):
+    reload_keys = (CONF_IS_CN, CONF_FITNESS_MAX_HR, CONF_FITNESS_SEX)
+    if any(previous_options.get(key) != current_options.get(key) for key in reload_keys):
         await hass.config_entries.async_reload(entry.entry_id)
         return
 
@@ -268,8 +328,15 @@ async def async_unload_entry(hass: HomeAssistant, entry: GarminConnectConfigEntr
 
     if DOMAIN in hass.data and entry.entry_id in hass.data[DOMAIN]:
         hass.data[DOMAIN].pop(entry.entry_id, None)
+    if FITNESS_DATA_KEY in hass.data:
+        hass.data[FITNESS_DATA_KEY].pop(entry.entry_id, None)
+    if ACTIVITY_EVALUATION_DATA_KEY in hass.data:
+        hass.data[ACTIVITY_EVALUATION_DATA_KEY].pop(entry.entry_id, None)
+    if INSIGHTS_DATA_KEY in hass.data:
+        hass.data[INSIGHTS_DATA_KEY].pop(entry.entry_id, None)
 
     if unload_ok and len(hass.config_entries.async_entries(DOMAIN)) == 1:
         await async_unload_services(hass)
+        await async_unload_fitness_probe_service(hass)
 
     return unload_ok

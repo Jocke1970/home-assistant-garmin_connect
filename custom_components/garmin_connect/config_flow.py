@@ -28,12 +28,23 @@ from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 
 from .const import (
     CONF_CLIENT_ID,
+    CONF_FITNESS_FTP_WATTS,
+    CONF_FITNESS_MAX_HR,
+    CONF_FITNESS_SEX,
+    CONF_FITNESS_THRESHOLD_SPEED_MPS,
     CONF_IS_CN,
     CONF_REFRESH_TOKEN,
     CONF_SCAN_INTERVAL,
     CONF_TOKEN,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    FITNESS_FTP_MAX,
+    FITNESS_FTP_MIN,
+    FITNESS_MAX_HR_MAX,
+    FITNESS_MAX_HR_MIN,
+    FITNESS_SEX_OPTIONS,
+    FITNESS_THRESHOLD_SPEED_MAX,
+    FITNESS_THRESHOLD_SPEED_MIN,
     MAX_SCAN_INTERVAL,
     MIN_SCAN_INTERVAL,
 )
@@ -146,7 +157,9 @@ class GarminConnectConfigFlow(ConfigFlow, domain=DOMAIN):
             options={CONF_IS_CN: self._is_cn},
         )
 
-    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Handle the initial step."""
         errors: dict[str, str] = {}
 
@@ -157,8 +170,7 @@ class GarminConnectConfigFlow(ConfigFlow, domain=DOMAIN):
 
             try:
                 await self._async_login(
-                    user_input[CONF_USERNAME],
-                    user_input[CONF_PASSWORD],
+                    user_input[CONF_USERNAME], user_input[CONF_PASSWORD]
                 )
             except GarminMFARequired:
                 return await self.async_step_mfa()
@@ -177,7 +189,9 @@ class GarminConnectConfigFlow(ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def async_step_mfa(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+    async def async_step_mfa(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Handle MFA step."""
         errors: dict[str, str] = {}
 
@@ -193,7 +207,6 @@ class GarminConnectConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_mfa"
             except GarminConnectError:
                 errors["base"] = "unknown"
-
             else:
                 if self.source == SOURCE_REAUTH:
                     return await self._async_finish_reauth()
@@ -209,7 +222,9 @@ class GarminConnectConfigFlow(ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> ConfigFlowResult:
+    async def async_step_reauth(
+        self, entry_data: Mapping[str, Any]
+    ) -> ConfigFlowResult:
         """Handle re-authentication."""
         return await self.async_step_reauth_confirm()
 
@@ -226,8 +241,7 @@ class GarminConnectConfigFlow(ConfigFlow, domain=DOMAIN):
 
             try:
                 await self._async_login(
-                    user_input[CONF_USERNAME],
-                    user_input[CONF_PASSWORD],
+                    user_input[CONF_USERNAME], user_input[CONF_PASSWORD]
                 )
             except GarminMFARequired:
                 return await self.async_step_mfa()
@@ -268,8 +282,7 @@ class GarminConnectConfigFlow(ConfigFlow, domain=DOMAIN):
 
             try:
                 await self._async_login(
-                    user_input[CONF_USERNAME],
-                    user_input[CONF_PASSWORD],
+                    user_input[CONF_USERNAME], user_input[CONF_PASSWORD]
                 )
             except GarminMFARequired:
                 return await self.async_step_mfa()
@@ -301,15 +314,30 @@ class GarminConnectConfigFlow(ConfigFlow, domain=DOMAIN):
 class GarminConnectOptionsFlow(OptionsFlow):
     """Handle options flow for Garmin Connect."""
 
-    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Manage the options."""
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Manage options, including Garmin Fitness Load Priority context."""
+        errors: dict[str, str] = {}
+
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            fitness_max_hr = user_input.get(CONF_FITNESS_MAX_HR)
+            fitness_sex = user_input.get(CONF_FITNESS_SEX)
+            if (fitness_max_hr is None) != (fitness_sex is None):
+                errors["base"] = "fitness_settings_incomplete"
+            else:
+                return self.async_create_entry(title="", data=user_input)
 
         current_scan_interval = self.config_entry.options.get(
             CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
         )
         current_is_cn = self.config_entry.options.get(CONF_IS_CN, False)
+        current_fitness_max_hr = self.config_entry.options.get(CONF_FITNESS_MAX_HR)
+        current_fitness_sex = self.config_entry.options.get(CONF_FITNESS_SEX)
+        current_fitness_ftp = self.config_entry.options.get(CONF_FITNESS_FTP_WATTS)
+        current_threshold_speed = self.config_entry.options.get(
+            CONF_FITNESS_THRESHOLD_SPEED_MPS
+        )
 
         return self.async_show_form(
             step_id="init",
@@ -323,6 +351,35 @@ class GarminConnectOptionsFlow(OptionsFlow):
                         vol.Range(min=MIN_SCAN_INTERVAL, max=MAX_SCAN_INTERVAL),
                     ),
                     vol.Optional(CONF_IS_CN, default=current_is_cn): bool,
+                    vol.Optional(
+                        CONF_FITNESS_MAX_HR,
+                        description={"suggested_value": current_fitness_max_hr},
+                    ): vol.All(
+                        vol.Coerce(int),
+                        vol.Range(min=FITNESS_MAX_HR_MIN, max=FITNESS_MAX_HR_MAX),
+                    ),
+                    vol.Optional(
+                        CONF_FITNESS_SEX,
+                        description={"suggested_value": current_fitness_sex},
+                    ): vol.In(FITNESS_SEX_OPTIONS),
+                    vol.Optional(
+                        CONF_FITNESS_FTP_WATTS,
+                        description={"suggested_value": current_fitness_ftp},
+                    ): vol.All(
+                        vol.Coerce(float),
+                        vol.Range(min=FITNESS_FTP_MIN, max=FITNESS_FTP_MAX),
+                    ),
+                    vol.Optional(
+                        CONF_FITNESS_THRESHOLD_SPEED_MPS,
+                        description={"suggested_value": current_threshold_speed},
+                    ): vol.All(
+                        vol.Coerce(float),
+                        vol.Range(
+                            min=FITNESS_THRESHOLD_SPEED_MIN,
+                            max=FITNESS_THRESHOLD_SPEED_MAX,
+                        ),
+                    ),
                 }
             ),
+            errors=errors,
         )

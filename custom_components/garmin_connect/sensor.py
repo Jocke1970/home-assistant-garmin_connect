@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date as dt_date
@@ -1208,7 +1209,7 @@ def _parse_iso(value: str) -> datetime.datetime | None:
     """Parse an ISO datetime string, returning None on failure."""
     try:
         return datetime.datetime.fromisoformat(value)
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return None
 
 
@@ -1223,8 +1224,7 @@ def _count_recent_activities(data: dict[str, Any]) -> int:
         [
             a
             for a in (data.get("lastActivities") or [])
-            if isinstance(a.get("startTime"), datetime.datetime)
-            and a["startTime"] >= cutoff
+            if isinstance(a.get("startTime"), datetime.datetime) and a["startTime"] >= cutoff
         ]
     )
 
@@ -1471,12 +1471,7 @@ def _menstrual_fertile_window_end(data: dict[str, Any]) -> dt_date | None:
     s = _menstrual_day_summary(data)
     fw_start = s.get("fertileWindowStart")
     fw_len = s.get("lengthOfFertileWindow")
-    if (
-        not isinstance(fw_start, int)
-        or fw_start <= 0
-        or not isinstance(fw_len, int)
-        or fw_len <= 0
-    ):
+    if not isinstance(fw_start, int) or fw_start <= 0 or not isinstance(fw_len, int) or fw_len <= 0:
         return None
     fertile_start = start_date + timedelta(days=fw_start - 1)
     return fertile_start + timedelta(days=fw_len - 1)
@@ -1718,7 +1713,7 @@ def _async_migrate_sleep_duration_entity_id(registry: er.EntityRegistry) -> None
             old_entity_id,
             new_entity_id="sensor.garmin_connect_sleep_duration",
         )
-    except (ValueError, KeyError):
+    except ValueError, KeyError:
         pass
 
 
@@ -1734,15 +1729,124 @@ def _async_migrate_gear_unique_ids(
         gear_uuid = gear_stat.get("uuid") or gear_stat.get("gearUuid", "")
         if not gear_uuid:
             continue
-        old_unique_id = (
-            f"{entry_id}_gear_{gear_name.lower().replace(' ', '_').replace('-', '_')}"
-        )
+        old_unique_id = f"{entry_id}_gear_{gear_name.lower().replace(' ', '_').replace('-', '_')}"
         if registry.async_get_entity_id("sensor", DOMAIN, old_unique_id) is None:
             continue
         new_unique_id = f"{entry_id}_gear_{gear_uuid}"
         entity_id = registry.async_get_entity_id("sensor", DOMAIN, old_unique_id)
         if entity_id:
             registry.async_update_entity(entity_id, new_unique_id=new_unique_id)
+
+
+_ACCESSORY_SENSOR_TYPE_NAMES = {
+    "HEART_RATE": "Heart rate sensor",
+    "BIKE_LIGHT_MAIN": "Bike light",
+}
+
+
+def _accessory_identity(sensor: dict[str, Any]) -> str:
+    """Return a stable, non-reversible identity for an ANT+/BLE accessory."""
+    serial = sensor.get("serialNumber")
+    if serial not in (None, ""):
+        basis = f"serial:{serial}"
+    else:
+        basis = "|".join(
+            str(sensor.get(key) or "")
+            for key in (
+                "sensorType",
+                "productId",
+                "partNumber",
+                "deviceName",
+                "manufacturer",
+            )
+        )
+    return hashlib.sha256(basis.encode()).hexdigest()[:16]
+
+
+def _registered_device_identity(device: dict[str, Any]) -> str:
+    """Return a stable, non-reversible identity for a registered Garmin device."""
+    device_id = device.get("deviceId")
+    unit_id = device.get("unitId")
+    basis_value = device_id if device_id not in (None, "") else unit_id
+    if basis_value in (None, ""):
+        basis_value = "|".join(
+            str(device.get(key) or "")
+            for key in ("applicationKey", "productSku", "displayName")
+        )
+    return hashlib.sha256(f"device:{basis_value}".encode()).hexdigest()[:16]
+
+
+def _clean_gear_text(value: Any) -> str | None:
+    """Return useful Gear branding text while dropping Garmin placeholders."""
+    text = str(value or "").strip()
+    if not text or text.lower() in {
+        "other",
+        "unknown",
+        "unknown bike",
+        "unknown shoes",
+    }:
+        return None
+    return text
+
+
+def _match_accessory_gear(
+    accessory: dict[str, Any], gear_data: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Conservatively match a Garmin accessory record to Gear v2 metadata.
+
+    Garmin's recent-sensors endpoint does not expose the Gear UUID. For bike
+    lights, a DURATION-tracked BIKE_COMPONENT is a strong signal. We only
+    enrich when exactly one active candidate exists; ambiguous cases remain
+    generic rather than guessing.
+    """
+    sensor_type = str(accessory.get("sensorType") or "").upper()
+    if sensor_type != "BIKE_LIGHT_MAIN":
+        return None
+
+    candidates = [
+        gear
+        for gear in gear_data.get("gearStats", [])
+        if isinstance(gear, dict)
+        and str(gear.get("status") or gear.get("gearStatusName") or "").upper() == "ACTIVE"
+        and str(gear.get("gearType") or "").upper() == "BIKE_COMPONENT"
+        and str(gear.get("usageType") or "").upper() == "DURATION"
+    ]
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _accessory_metadata(
+    accessory: dict[str, Any], gear_data: dict[str, Any]
+) -> dict[str, str | None]:
+    """Build display metadata without exposing accessory identifiers."""
+    gear = _match_accessory_gear(accessory, gear_data)
+    if gear is not None:
+        brand = _clean_gear_text(gear.get("brand") or gear.get("gearMakeName"))
+        model = _clean_gear_text(gear.get("model") or gear.get("gearModelName"))
+        custom = _clean_gear_text(gear.get("customMakeModel"))
+        display_name = " ".join(part for part in (brand, model) if part)
+        if not display_name:
+            display_name = custom or "Garmin accessory"
+        return {
+            "name": display_name,
+            "manufacturer": brand,
+            "model": model,
+            "gear_uuid": str(gear.get("uuid") or gear.get("gearUuid") or "") or None,
+        }
+
+    sensor_type = str(accessory.get("sensorType") or "UNKNOWN").upper()
+    display_name = str(accessory.get("deviceName") or "").strip()
+    if not display_name:
+        display_name = _ACCESSORY_SENSOR_TYPE_NAMES.get(
+            sensor_type, sensor_type.replace("_", " ").title()
+        )
+    manufacturer = str(accessory.get("manufacturer") or "").strip() or None
+    model = str(accessory.get("partNumber") or "").strip() or None
+    return {
+        "name": display_name,
+        "manufacturer": manufacturer,
+        "model": model,
+        "gear_uuid": None,
+    }
 
 
 async def async_setup_entry(
@@ -1754,7 +1858,11 @@ async def async_setup_entry(
     coordinators = entry.runtime_data
 
     entities: list[
-        GarminConnectSensor | GarminConnectGearSensor | GarminConnectPowerToWeightSensor
+        GarminConnectSensor
+        | GarminConnectGearSensor
+        | GarminConnectDeviceBatterySensor
+        | GarminConnectAccessoryBatterySensor
+        | GarminConnectPowerToWeightSensor
     ] = []
 
     for coord_type, descriptions in _COORDINATOR_SENSOR_MAP:
@@ -1788,6 +1896,79 @@ async def async_setup_entry(
                 )
             )
 
+    # Dynamic registered Garmin-device battery entities. Garmin's device endpoint
+    # may provide a numeric percentage, a qualitative status, or both.
+    known_device_battery_entities: set[tuple[str, str]] = set()
+
+    def _collect_new_device_battery_entities() -> list[GarminConnectDeviceBatterySensor]:
+        if not coordinators.gear.data:
+            return []
+        new_entities: list[GarminConnectDeviceBatterySensor] = []
+        for device in coordinators.gear.data.get("devices", []):
+            if not isinstance(device, dict):
+                continue
+            device_key = _registered_device_identity(device)
+            battery_level = device.get("batteryLevel")
+            battery_status = device.get("batteryStatus")
+            kinds: list[str] = []
+            if isinstance(battery_level, int | float) and not isinstance(battery_level, bool):
+                kinds.append("level")
+            if isinstance(battery_status, str) and battery_status:
+                kinds.append("status")
+            for kind in kinds:
+                token = (device_key, kind)
+                if token in known_device_battery_entities:
+                    continue
+                known_device_battery_entities.add(token)
+                new_entities.append(
+                    GarminConnectDeviceBatterySensor(
+                        coordinators.gear,
+                        device_key=device_key,
+                        kind=kind,
+                        entry_id=entry.entry_id,
+                    )
+                )
+        return new_entities
+
+    entities.extend(_collect_new_device_battery_entities())
+
+    # Dynamic ANT+/BLE accessory battery entities. Battery percentage and
+    # qualitative battery status are separate entities because Garmin may provide
+    # either one independently (for example, bike lights can be status-only).
+    known_accessory_entities: set[tuple[str, str]] = set()
+
+    def _collect_new_accessory_entities() -> list[GarminConnectAccessoryBatterySensor]:
+        if not coordinators.gear.data:
+            return []
+        new_entities: list[GarminConnectAccessoryBatterySensor] = []
+        for accessory in coordinators.gear.data.get("sensors", []):
+            if not isinstance(accessory, dict):
+                continue
+            accessory_key = _accessory_identity(accessory)
+            battery_level = accessory.get("batteryLevel")
+            battery_status = accessory.get("batteryStatus")
+            kinds: list[str] = []
+            if isinstance(battery_level, int | float) and not isinstance(battery_level, bool):
+                kinds.append("level")
+            if isinstance(battery_status, str) and battery_status:
+                kinds.append("status")
+            for kind in kinds:
+                token = (accessory_key, kind)
+                if token in known_accessory_entities:
+                    continue
+                known_accessory_entities.add(token)
+                new_entities.append(
+                    GarminConnectAccessoryBatterySensor(
+                        coordinators.gear,
+                        accessory_key=accessory_key,
+                        kind=kind,
+                        entry_id=entry.entry_id,
+                    )
+                )
+        return new_entities
+
+    entities.extend(_collect_new_accessory_entities())
+
     @callback
     def _async_add_new_gear() -> None:
         """Dynamically add gear entities when new gear appears in coordinator data."""
@@ -1812,6 +1993,26 @@ async def async_setup_entry(
             async_add_entities(new_entities)
 
     entry.async_on_unload(coordinators.gear.async_add_listener(_async_add_new_gear))
+
+    @callback
+    def _async_add_new_registered_device_battery() -> None:
+        """Add battery entities when Garmin starts reporting a device value."""
+        new_entities = _collect_new_device_battery_entities()
+        if new_entities:
+            async_add_entities(new_entities)
+
+    entry.async_on_unload(
+        coordinators.gear.async_add_listener(_async_add_new_registered_device_battery)
+    )
+
+    @callback
+    def _async_add_new_accessory_battery() -> None:
+        """Add battery entities when Garmin starts reporting a new accessory/value."""
+        new_entities = _collect_new_accessory_entities()
+        if new_entities:
+            async_add_entities(new_entities)
+
+    entry.async_on_unload(coordinators.gear.async_add_listener(_async_add_new_accessory_battery))
 
     # Dynamic power-to-weight sensors (one PTW + one FTP sensor per sport)
     ptw_list: list[dict[str, Any]] = (coordinators.training.data or {}).get("powerToWeight") or []
@@ -1890,6 +2091,188 @@ class GarminConnectSensor(CoordinatorEntity[BaseGarminCoordinator], SensorEntity
         return self.entity_description.attributes_fn(self.coordinator.data)
 
 
+class GarminConnectDeviceBatterySensor(CoordinatorEntity[GearCoordinator], SensorEntity):
+    """Battery percentage or status for a registered Garmin device."""
+
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: GearCoordinator,
+        device_key: str,
+        kind: str,
+        entry_id: str,
+    ) -> None:
+        """Initialize a registered-device battery entity."""
+        super().__init__(coordinator)
+        self._device_key = device_key
+        self._kind = kind
+        self._attr_unique_id = f"{entry_id}_device_{device_key}_battery_{kind}"
+        self._attr_name = "Battery" if kind == "level" else "Battery status"
+
+        if kind == "level":
+            self._attr_native_unit_of_measurement = PERCENTAGE
+            self._attr_device_class = SensorDeviceClass.BATTERY
+            self._attr_state_class = SensorStateClass.MEASUREMENT
+            self._attr_suggested_display_precision = 0
+
+        device = self._get_device() or {}
+        display_name = str(
+            device.get("productDisplayName") or device.get("displayName") or "Garmin device"
+        ).strip()
+        model = str(
+            device.get("productDisplayName") or device.get("deviceTypeName") or ""
+        ).strip()
+        device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"registered_device_{device_key}")},
+            name=display_name or "Garmin device",
+            manufacturer="Garmin",
+        )
+        if model:
+            device_info["model"] = model
+        firmware = device.get("currentFirmwareVersion")
+        if firmware not in (None, ""):
+            device_info["sw_version"] = str(firmware)
+        self._attr_device_info = device_info
+
+    def _get_device(self) -> dict[str, Any] | None:
+        """Return the current Garmin registered-device record for this key."""
+        if not self.coordinator.data:
+            return None
+        for device in self.coordinator.data.get("devices", []):
+            if (
+                isinstance(device, dict)
+                and _registered_device_identity(device) == self._device_key
+            ):
+                return device
+        return None
+
+    @property
+    def native_value(self) -> str | int | float | None:
+        """Return battery percentage or Garmin's qualitative battery status."""
+        device = self._get_device()
+        if device is None:
+            return None
+        if self._kind == "level":
+            value = device.get("batteryLevel")
+            if isinstance(value, int | float) and not isinstance(value, bool):
+                return value
+            return None
+        value = device.get("batteryStatus")
+        return value if isinstance(value, str) and value else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return useful registered-device metadata without serial numbers."""
+        device = self._get_device()
+        if device is None:
+            return {}
+        return {
+            key: value
+            for key, value in {
+                "battery_level": device.get("batteryLevel"),
+                "battery_status": device.get("batteryStatus"),
+                "device_status": device.get("deviceStatus"),
+                "firmware": device.get("currentFirmwareVersion"),
+                "application_key": device.get("applicationKey"),
+                "product_sku": device.get("productSku"),
+            }.items()
+            if value is not None
+        }
+
+
+class GarminConnectAccessoryBatterySensor(CoordinatorEntity[GearCoordinator], SensorEntity):
+    """Battery percentage or status for a recent Garmin ANT+/BLE accessory."""
+
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: GearCoordinator,
+        accessory_key: str,
+        kind: str,
+        entry_id: str,
+    ) -> None:
+        """Initialize an accessory battery entity."""
+        super().__init__(coordinator)
+        self._accessory_key = accessory_key
+        self._kind = kind
+        self._attr_unique_id = f"{entry_id}_accessory_{accessory_key}_battery_{kind}"
+        self._attr_name = "Battery" if kind == "level" else "Battery status"
+
+        if kind == "level":
+            self._attr_native_unit_of_measurement = PERCENTAGE
+            self._attr_device_class = SensorDeviceClass.BATTERY
+            self._attr_state_class = SensorStateClass.MEASUREMENT
+            self._attr_suggested_display_precision = 0
+
+        accessory = self._get_accessory() or {}
+        metadata = _accessory_metadata(accessory, coordinator.data or {})
+        device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"accessory_{accessory_key}")},
+            name=metadata["name"] or "Garmin accessory",
+        )
+        if metadata["manufacturer"]:
+            device_info["manufacturer"] = metadata["manufacturer"]
+        if metadata["model"]:
+            device_info["model"] = metadata["model"]
+        software_version = accessory.get("softwareVersion")
+        if software_version not in (None, ""):
+            device_info["sw_version"] = str(software_version)
+        self._attr_device_info = device_info
+
+    def _get_accessory(self) -> dict[str, Any] | None:
+        """Return the current Garmin accessory record for this stable key."""
+        if not self.coordinator.data:
+            return None
+        for accessory in self.coordinator.data.get("sensors", []):
+            if (
+                isinstance(accessory, dict)
+                and _accessory_identity(accessory) == self._accessory_key
+            ):
+                return accessory
+        return None
+
+    @property
+    def native_value(self) -> str | int | float | None:
+        """Return battery percentage or Garmin's qualitative battery status."""
+        accessory = self._get_accessory()
+        if accessory is None:
+            return None
+        if self._kind == "level":
+            value = accessory.get("batteryLevel")
+            if isinstance(value, int | float) and not isinstance(value, bool):
+                return value
+            return None
+        value = accessory.get("batteryStatus")
+        return value if isinstance(value, str) and value else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return useful accessory metadata while keeping identifiers private."""
+        accessory = self._get_accessory()
+        if accessory is None:
+            return {}
+        metadata = _accessory_metadata(accessory, self.coordinator.data or {})
+        return {
+            key: value
+            for key, value in {
+                "sensor_type": accessory.get("sensorType"),
+                "battery_level": accessory.get("batteryLevel"),
+                "battery_status": accessory.get("batteryStatus"),
+                "last_connected": accessory.get("lastConnected"),
+                "last_low_battery_notification": accessory.get("lastLowBatteryNotification"),
+                "rechargeable_sensor_capable": accessory.get("rechargeableSensorCapable"),
+                "gear_uuid": metadata.get("gear_uuid"),
+                "gear_brand": metadata.get("manufacturer"),
+                "gear_model": metadata.get("model"),
+            }.items()
+            if value is not None
+        }
+
+
 class GarminConnectGearSensor(CoordinatorEntity[GearCoordinator], SensorEntity):
     """Representation of a dynamic Garmin Connect gear sensor."""
 
@@ -1906,10 +2289,9 @@ class GarminConnectGearSensor(CoordinatorEntity[GearCoordinator], SensorEntity):
         super().__init__(coordinator)
         self._gear_uuid = gear_uuid
         self._gear_name = gear_name or "Unknown"
-        self._attr_native_unit_of_measurement = UnitOfLength.METERS
-        self._attr_device_class = SensorDeviceClass.DISTANCE
+        self._usage_type = "DISTANCE"
         self._attr_state_class = SensorStateClass.TOTAL_INCREASING
-        self._attr_suggested_display_precision = 0
+        self._configure_usage_metadata()
         self._attr_unique_id = f"{entry_id}_gear_{gear_uuid}"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry_id)},
@@ -1918,6 +2300,31 @@ class GarminConnectGearSensor(CoordinatorEntity[GearCoordinator], SensorEntity):
             entry_type=DeviceEntryType.SERVICE,
         )
 
+    def _get_gear_stat(self) -> dict[str, Any] | None:
+        """Return the current coordinator record for this Gear UUID."""
+        if not self.coordinator.data:
+            return None
+        for gear_stat in self.coordinator.data.get("gearStats", []):
+            if (gear_stat.get("uuid") or gear_stat.get("gearUuid")) == self._gear_uuid:
+                return cast(dict[str, Any], gear_stat)
+        return None
+
+    def _configure_usage_metadata(self, gear_stat: dict[str, Any] | None = None) -> None:
+        """Configure state semantics from Garmin Gear v2 usageType."""
+        gear_stat = gear_stat or self._get_gear_stat() or {}
+        usage_type = str(gear_stat.get("usageType") or "DISTANCE").upper()
+        self._usage_type = usage_type
+
+        if usage_type == "DURATION":
+            self._attr_native_unit_of_measurement = UnitOfTime.HOURS
+            self._attr_device_class = SensorDeviceClass.DURATION
+            self._attr_suggested_display_precision = 2
+        else:
+            # Garmin v2 DISTANCE and legacy Gear remain distance sensors.
+            self._attr_native_unit_of_measurement = UnitOfLength.METERS
+            self._attr_device_class = SensorDeviceClass.DISTANCE
+            self._attr_suggested_display_precision = 0
+
     @property
     def name(self) -> str:
         """Return the name of the sensor."""
@@ -1925,45 +2332,70 @@ class GarminConnectGearSensor(CoordinatorEntity[GearCoordinator], SensorEntity):
 
     @property
     def native_value(self) -> float | int | None:
-        """Return total distance for this gear in meters."""
-        if not self.coordinator.data:
+        """Return the Garmin-selected primary usage value for this Gear item."""
+        gear_stat = self._get_gear_stat()
+        if gear_stat is None:
             return None
 
-        gear_stats = self.coordinator.data.get("gearStats", [])
-        for gear_stat in gear_stats:
-            if (gear_stat.get("uuid") or gear_stat.get("gearUuid")) == self._gear_uuid:
-                raw = gear_stat.get("totalDistance")
-                return cast(float | int | None, raw)
+        usage_type = str(gear_stat.get("usageType") or "DISTANCE").upper()
+        if usage_type != self._usage_type:
+            self._configure_usage_metadata(gear_stat)
 
-        return None
+        if usage_type == "DURATION":
+            raw = gear_stat.get("durationUsedSeconds")
+            if isinstance(raw, int | float) and not isinstance(raw, bool):
+                return round(float(raw) / 3600, 2)
+            return None
+
+        raw = gear_stat.get("distanceUsedMeters")
+        if raw is None:
+            raw = gear_stat.get("totalDistance")
+        return cast(float | int | None, raw)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return gear details as attributes."""
-        if not self.coordinator.data:
+        """Return legacy and Garmin Gear v2 details as attributes."""
+        gear_stat = self._get_gear_stat()
+        if gear_stat is None:
             return {}
-        for gear_stat in self.coordinator.data.get("gearStats", []):
-            if (gear_stat.get("uuid") or gear_stat.get("gearUuid")) == self._gear_uuid:
-                return {
-                    "gear_uuid": self._gear_uuid,
-                    "total_activities": gear_stat.get("totalActivities"),
-                    "usage_type": gear_stat.get("usageType"),
-                    "duration_used_seconds": gear_stat.get("durationUsedSeconds"),
-                    "days_used": gear_stat.get("daysUsed"),
-                    "date_begin": gear_stat.get("dateBegin"),
-                    "date_end": gear_stat.get("dateEnd"),
-                    "gear_make_name": gear_stat.get("gearMakeName"),
-                    "gear_model_name": gear_stat.get("gearModelName"),
-                    "gear_status_name": gear_stat.get("gearStatusName"),
-                    "custom_make_model": gear_stat.get("customMakeModel"),
-                    "maximum_meters": gear_stat.get("maximumMeters"),
-                    "default_for_activity": gear_stat.get("defaultForActivity", []),
-                    "default_for_activity_details": gear_stat.get(
-                        "defaultForActivityDetails", []
-                    ),
-                    "last_activity": gear_stat.get("lastActivity"),
-                }
-        return {}
+
+        duration_seconds = gear_stat.get("durationUsedSeconds")
+        duration_hours = (
+            round(float(duration_seconds) / 3600, 2)
+            if isinstance(duration_seconds, int | float) and not isinstance(duration_seconds, bool)
+            else None
+        )
+        distance_used = gear_stat.get("distanceUsedMeters")
+        if distance_used is None:
+            distance_used = gear_stat.get("totalDistance")
+
+        return {
+            "gear_uuid": self._gear_uuid,
+            "total_activities": gear_stat.get("totalActivities"),
+            "date_begin": gear_stat.get("dateBegin"),
+            "date_end": gear_stat.get("dateEnd"),
+            "gear_make_name": gear_stat.get("gearMakeName"),
+            "gear_model_name": gear_stat.get("gearModelName"),
+            "gear_status_name": gear_stat.get("gearStatusName"),
+            "custom_make_model": gear_stat.get("customMakeModel"),
+            "maximum_meters": gear_stat.get("maximumMeters"),
+            "gear_name": gear_stat.get("gearName"),
+            "gear_type": gear_stat.get("gearType"),
+            "gear_type_name": gear_stat.get("gearTypeName"),
+            "gear_brand": gear_stat.get("brand") or gear_stat.get("gearMakeName"),
+            "gear_model": gear_stat.get("model") or gear_stat.get("gearModelName"),
+            "usage_type": gear_stat.get("usageType") or "DISTANCE",
+            "distance_used_meters": distance_used,
+            "duration_used_seconds": duration_seconds,
+            "duration_used_hours": duration_hours,
+            "days_used": gear_stat.get("daysUsed"),
+            "max_usage_duration_seconds": gear_stat.get("maxUsageDurationSeconds"),
+            "first_use_date": gear_stat.get("firstUseDate"),
+            "associated_activity_types": gear_stat.get("associatedActivityTypes", []),
+            "default_for_activity": gear_stat.get("defaultForActivity", []),
+            "default_for_activity_details": gear_stat.get("defaultForActivityDetails", []),
+            "last_activity": gear_stat.get("lastActivity"),
+        }
 
 
 class GarminConnectPowerToWeightSensor(CoordinatorEntity[TrainingCoordinator], SensorEntity):
