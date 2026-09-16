@@ -4,11 +4,15 @@ on:
   push:
     branches:
       - main
+      - beta
+      - dev
       - ng
       - feature/garmin-fitness
   pull_request:
     branches:
       - main
+      - beta
+      - dev
       - ng
   workflow_dispatch:
 
