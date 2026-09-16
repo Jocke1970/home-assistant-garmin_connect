@@ -17,7 +17,7 @@
   ],
   "quality_scale": "gold",
   "requirements": [
-    "ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@c5c2d7e62bb7d9d311c11200ab325f435a2da5c9"
+    "ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@4480e4bb60f8c5cc303c1427a89824d0d4951063"
   ],
-  "version": "3.0.33-gear-links-v1"
+  "version": "3.0.34-dev.1"
 }
