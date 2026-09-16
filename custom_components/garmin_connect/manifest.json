@@ -17,7 +17,7 @@
   ],
   "quality_scale": "gold",
   "requirements": [
-    "ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@10117accc105961e027c368fe8aca42c7c83cec8"
+    "ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@a10bfccd947b5dfb4437b63f9a813083e19eb978"
   ],
-  "version": "3.0.35-dev.1"
+  "version": "3.0.35-beta.1"
 }
