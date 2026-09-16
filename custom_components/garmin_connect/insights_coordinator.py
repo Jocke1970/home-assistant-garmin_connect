@@ -10,7 +10,6 @@ from typing import Any
 from aiohttp import ClientError
 from ha_garmin import GarminClient, GarminHistoryClient
 from ha_garmin.exceptions import GarminAuthError, GarminConnectError
-from ha_garmin.fitness import recommend_daily_load_budget
 from ha_garmin.insights import (
     INSIGHT_RULESET_VERSION,
     InsightResult,
@@ -24,7 +23,12 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN
+from .const import (
+    CONF_FITNESS_FTP_WATTS,
+    CONF_FITNESS_THRESHOLD_SPEED_MPS,
+    DOMAIN,
+)
+from .fitness_budget_policy import build_priority_aware_daily_budget
 from .fitness_coordinator import FitnessCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -106,6 +110,7 @@ class InsightsCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             name=f"{DOMAIN}_insights",
             update_interval=INSIGHTS_UPDATE_INTERVAL,
         )
+        self.entry = entry
         self.history_client = GarminHistoryClient(client)
         self.fitness = fitness
 
@@ -153,12 +158,31 @@ class InsightsCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         daily_load_budget: dict[str, Any] | None = None
         try:
-            budget = recommend_daily_load_budget(
-                context.history,
-                personal_trimp_max,
-                insight_result_ids=tuple(result.id for result in results),
+            user_max_hr = self.fitness.user_max_hr
+            sex = self.fitness.sex
+            if user_max_hr is None or sex is None:
+                raise ValueError("Fitness HR profile is incomplete")
+
+            raw_ftp = self.entry.options.get(CONF_FITNESS_FTP_WATTS)
+            raw_threshold_speed = self.entry.options.get(
+                CONF_FITNESS_THRESHOLD_SPEED_MPS
             )
-            daily_load_budget = _json_value(asdict(budget))
+            ftp_watts = float(raw_ftp) if raw_ftp is not None else None
+            threshold_speed_mps = (
+                float(raw_threshold_speed) if raw_threshold_speed is not None else None
+            )
+
+            daily_load_budget = _json_value(
+                build_priority_aware_daily_budget(
+                    context,
+                    personal_trimp_max,
+                    user_max_hr=user_max_hr,
+                    sex=sex,
+                    insight_result_ids=tuple(result.id for result in results),
+                    ftp_watts=ftp_watts,
+                    threshold_speed_mps=threshold_speed_mps,
+                )
+            )
         except ValueError as err:
             # Budgeting is additive. A sparse or temporarily incomplete history
             # must not take down otherwise valid Insights output.
