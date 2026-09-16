@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 from ha_garmin.fitness.load_priority_preview import (
     DEFAULT_LOAD_PRIORITY,
+    SPORT_FAMILY,
     LoadMethod,
     preview_activity_load,
 )
@@ -27,11 +28,10 @@ def build_load_priority_report(
     ftp_watts: float | None = None,
     threshold_speed_mps: float | None = None,
 ) -> dict[str, Any]:
-    """Evaluate already-cached Garmin activities without changing training history.
+    """Report a single selected source per activity from already-cached history.
 
-    A result represents exactly one unit from exactly one source per activity.
-    Never sum these results across methods, export them as TRIMP or update CTL,
-    ATL, ACWR, Strain, Ramp or the daily training budget.
+    HR TRIMP, power TSS, Garmin Load and the pace proxy have different units.
+    They must not be summed, backfilled or fed into training recommendations.
     """
     if not 1 <= limit <= 30:
         raise ValueError("limit must be between 1 and 30")
@@ -50,7 +50,13 @@ def build_load_priority_report(
 
     # Normalization provides chronological activities. Most recent first for HA.
     for activity in reversed(context.activities):
-        # The selector owns the mapping of raw Garmin activity types to sports.
+        activity_sport = SPORT_FAMILY.get(activity.activity_type, "other")
+        if sport is not None and activity_sport != sport:
+            continue
+        matching += 1
+        if len(reports) >= limit:
+            continue
+
         result = preview_activity_load(
             activity,
             profiles=profiles,
@@ -59,29 +65,8 @@ def build_load_priority_report(
             sex=sex,
             ftp_watts=ftp_watts,
             threshold_speed_mps=threshold_speed_mps,
-            override=override if sport is not None else None,
-        ) if sport is None else None
-        if sport is not None:
-            # Restrict the override to the requested sport only. Do not let a
-            # one-off preview change how other activities are interpreted.
-            from ha_garmin.fitness.load_priority_preview import SPORT_FAMILY
-
-            if SPORT_FAMILY.get(activity.activity_type, "other") != sport:
-                continue
-            result = preview_activity_load(
-                activity,
-                profiles=profiles,
-                resting_hr=context.resting_hr_by_date.get(activity.calendar_date),
-                user_max_hr=user_max_hr,
-                sex=sex,
-                ftp_watts=ftp_watts,
-                threshold_speed_mps=threshold_speed_mps,
-                override=override,
-            )
-        assert result is not None
-        matching += 1
-        if len(reports) >= limit:
-            continue
+            override=override,
+        )
         selected = result.selected_method
         if selected is None:
             unavailable += 1
