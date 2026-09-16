@@ -1,49 +1,36 @@
 # Garmin Fitness — Load Priority backend (`dev`)
 
-Status: **dev-only diagnostic action; not a new live training-load algorithm.**
+Status: **development only, not beta-validated**. `main` and `beta` remain untouched.
 
-This integration pins `Jocke1970/ha-garmin` at `4480e4bb60f8c5cc303c1427a89824d0d4951063` so the isolated source-priority engine is available at runtime. `main` is unchanged. Promote `dev` to `beta` only after review and passing tests/Hassfest/HACS, and `beta` to `main` only after validation with real activities.
+## What is live in `dev`
 
-## Backend action
+The integration manifest uses `3.0.35-dev.1` and pins `Jocke1970/ha-garmin` to commit `4480e4bb60f8c5cc303c1427a89824d0d4951063`.
 
-Use Home Assistant **Developer Tools → Actions** (enable response display) and call `garmin_connect.fitness_load_priority_preview` with the following service data:
+The normal Insights refresh calls `build_priority_aware_daily_budget` and exposes its output on `sensor.garmin_fitness_garmin_daily_load_budget`. This is NOT merely a read-only preview: the planning budget changes when the installed integration uses this branch. Canonical training history, recorded statistics and normal Fitness metrics remain unchanged.
+
+The budget applies fixed, per-sport source-priority defaults to classify today's activity intensity. Clearly low-intensity activities are excluded in full from the synthetic *planning* day's TRIMP consumption; their actual TRIMP remains in canonical training history. This is an experimental policy decision, not a claim that exercise has no physiological load. Power TSS, pace proxy and Garmin Load are NOT summed or relabeled as TRIMP. The independent ACWR ceiling of 1.30 remains in force, so excluding easy walks can still result in zero remaining budget.
+
+Inspect these sensor attributes: `planning_mode: load_priority`, `planning_policy_version: 2`, `canonical_current_load`, `budget_consuming_load`, `excluded_low_intensity_load`, `low_intensity_activity_count`, `training_activity_count`, `unknown_intensity_activity_count`, `activity_decisions`. Per-activity decisions cover **today only**. Priorities are defaults and cannot yet be persisted through a per-sport settings UI. Power classification requires normalized power and FTP; otherwise the preview attempts the next available source.
+
+## Read-only diagnostic action
+
+Use Home Assistant **Developer Tools → Actions** (enable response display) and call `garmin_connect.fitness_load_priority_preview` with:
 
 ```yaml
 sport: walking
 limit: 10
 ```
 
-Optional `entity_id` targets a specific Garmin Connect account, mandatory when multiple accounts exist. It selects the existing authenticated account using the integration's normal entity registry resolution. The action then uses **only that account's cached Garmin Fitness context**. If Fitness is not configured or the context is unavailable, the action errors rather than guessing from another account.
+Optional `entity_id` targets a particular Garmin Connect account and is required for multiple accounts. Only that account's cached Fitness context is used, with no extra Garmin API fetch. If it is unavailable the action fails explicitly.
 
-Optional parameters: `sport` (`walking`, `cycling`, `running`, `rowing`, `strength`, `other`); `priority` (ordered, unique list of `power`, `hr`, `pace`, `garmin`, requires `sport`); `override` (one method with *no fallback*, requires `sport`); `ftp_watts` (1–2500); `threshold_speed_mps` (0.1–20); and `limit` (1–30, default 10). Changes only affect the current request, are not stored and do not change the canonical data.
+Optional parameters: `sport` (`walking`, `cycling`, `running`, `rowing`, `strength`, `other`); `priority` (ordered list of unique `power`, `hr`, `pace`, `garmin`; requires `sport`); `override` (one method without fallback; requires `sport`); `ftp_watts` (1–2500); `threshold_speed_mps` (0.1–20); `limit` (1–30, default 10). Overrides affect only this diagnostic request, are not stored, and do not alter the live budget policy. Each returned activity includes the selected source, load unit and fallback attempts. Different load units must never be summed.
 
-Example power preview:
+## Gates before promoting `dev → beta`
 
-```yaml
-sport: cycling
-priority:
-  - power
-  - hr
-  - pace
-  - garmin
-ftp_watts: 200
-limit: 5
-```
+1. Verify CI on both the integration repository and `ha-garmin`: tests, formatting, lint, type checks, package build, HACS and Hassfest as applicable.
+2. Replay a real easy walking day with high ACWR, a power-based hard cycling day with valid FTP, HR fallback without FTP, mixed easy/hard activities on the same day, missing metrics, and duplicate/shadow-activity scenarios. Verify actual-versus-budget load and whether the hard ACWR cutoff still results in zero.
+3. Confirm that excluding *all* clearly easy TRIMP, rather than discounting it, is the intended budget policy. Agree a separate policy for a high pre-existing ACWR if necessary. Do not claim that Load Priority alone solves a zero budget.
+4. Reconcile the histories of `dev` and `beta` in BOTH repositories before merging; they currently have diverged. Preserve beta-only changes rather than replacing the beta branch blindly. Check and update the pinned `ha-garmin` commit after dependency changes.
+5. Only then merge/reconcile into `beta`, set a distinct `-beta.1` version, and publish a beta pre-release for live HA testing. Promote `beta → main` after real beta validation, not merely green unit tests.
 
-The action returns per-activity `selected_source`, `load`, `unit`, priority and an `attempts` trail documenting missing inputs or fallback. It also returns `matched_activities`, `returned_activities`, and counts of methods selected in the returned subset. These counts **are not workload totals**.
-
-## Safety constraints
-
-* The current canonical pipeline stays Banister TRIMP. Existing Daily Load, CTL, ATL, TSB, ACWR, Ramp, Strain, budget and recorded long-term statistics are unmodified.
-* TRIMP, Power TSS, Garmin Load and the experimental pace proxy have different scales. **Never sum them, relabel them as TRIMP, or pass them to the budget.** Pace is an unvalidated proxy.
-* The action is read-only. It uses cached context and makes no additional Garmin API calls. Missing readings stay unavailable (`null`), not zero.
-* `activity_id` is returned for inspection only, not automatically written to state history.
-* Selecting HR for walking does not automatically fix V1's separate hard ACWR cutoff; budget policy requires its own replay tests and review.
-
-## Release gates
-
-1. On `dev`, validate code and service tests plus Hassfest and HACS. Verify an activity with normalized power + FTP, a walk with HR, a missing-FTP fallback, and an override without fallback.
-2. Inspect real Garmin API power, resting-HR, FTP and threshold availability and determine a calibrated common workload scale (or maintain separate histories). Review explicit rules for historical recalculation.
-3. Keep `beta` unchanged until the above review. Promote deliberately to `beta` and retest; do not promote to `main` without validation. Do not label this diagnostic preview as a completed budget fix.
-
-The separate graph-card `Konfigurationsfel` is a frontend issue and not affected by this backend action.
+The Garmin Fitness graph card is a separate Lovelace resource. The original `www/garmin_fitness_card/garmin-fitness-card.js` v0.1.5 was restored by correcting the registered `/local/garmin_fitness_card/garmin-fitness-card.js?v=0.1.5` resource; this backend does not deliver that JS file.
