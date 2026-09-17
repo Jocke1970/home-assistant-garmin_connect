@@ -1,5 +1,5 @@
-# Parallell test: lägg som NYTT kort i en separat Lovelace-vy.
-# Kräver befintligt fungerande grafkort v0.1.5 och ny dashboardresurs.
+# Parallel test: add as a NEW card in a dedicated Lovelace test view.
+# Requires the existing working graph card v0.1.6-dev.2 and the dashboard resource.
 type: custom:garmin-fitness-dashboard-card
 graph_days: 90
 show_banner: true
