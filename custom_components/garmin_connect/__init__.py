@@ -10,6 +10,7 @@ from ha_garmin import GarminAuth, GarminClient
 from homeassistant.config_entries import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
 
@@ -57,6 +58,7 @@ from .insights_sensor import async_add_insights_sensor_entities
 from .services import async_setup_services, async_unload_services
 
 _LOGGER = logging.getLogger(__name__)
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.SELECT]
 
@@ -106,7 +108,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: GarminConnectConfigEnt
     if entry.version == 1:
         _LOGGER.info("Migrating Garmin Connect entry %s from v1 to v2", entry.title)
 
-        # The old unique_id was the email address; it's also used as the
+        # The old unique_id was the email address; it is also used as the
         # prefix for all entity unique_ids (e.g. "user@example.com_totalSteps").
         old_prefix = entry.unique_id or ""
 
@@ -187,7 +189,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: GarminConnectConfigEntry
     """Set up Garmin Connect from a config entry."""
     if CONF_TOKEN not in entry.data:
         # Migration from v1 bumps version and starts reauth but setup still runs.
-        # Without valid DI tokens there's nothing to set up — reauth will fix it.
+        # Without valid DI tokens there is nothing to set up — reauth will fix it.
         raise ConfigEntryAuthFailed(
             f"Garmin Connect credentials for {entry.title} need to be re-authenticated"
         )
