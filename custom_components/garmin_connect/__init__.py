@@ -11,6 +11,7 @@ from homeassistant.config_entries import ConfigEntryAuthFailed, ConfigEntryNotRe
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.typing import ConfigType
 
 from .activity_evaluation_coordinator import ActivityEvaluationCoordinator
 from .activity_evaluation_sensor import async_add_activity_evaluation_sensor_entities
@@ -42,6 +43,7 @@ from .coordinator import (
     TrainingCoordinator,
 )
 from .fitness_coordinator import FitnessCoordinator
+from .fitness_frontend import async_register_fitness_frontend
 from .fitness_sensor import async_add_fitness_sensor_entities
 from .fitness_service import (
     async_setup_fitness_probe_service,
@@ -173,6 +175,12 @@ def _migrate_entity_unique_ids(
                 old_uid,
                 new_uid,
             )
+
+
+async def async_setup(hass: HomeAssistant, _config: ConfigType) -> bool:
+    """Expose HACS-packaged Fitness cards without modifying user resources."""
+    await async_register_fitness_frontend(hass)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: GarminConnectConfigEntry) -> bool:

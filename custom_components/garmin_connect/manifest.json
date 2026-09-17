@@ -19,5 +19,8 @@
   "requirements": [
     "ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@10117accc105961e027c368fe8aca42c7c83cec8"
   ],
-  "version": "3.0.35-dev.1"
+  "version": "3.0.35-dev.2",
+  "dependencies": [
+    "http"
+  ]
 }

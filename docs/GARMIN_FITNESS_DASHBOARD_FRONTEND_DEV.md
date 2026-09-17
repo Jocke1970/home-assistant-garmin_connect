@@ -9,20 +9,41 @@ Status: The frontend was tested alongside the existing dashboard in a real Home 
 - Calculations remain exclusively in the backend. The dashboard reads Home Assistant entities and does not call the Garmin API directly.
 - The graph card is mounted once. HA state updates must not recreate it or reset the selected range or expanded sections.
 
-**The repository's `www/` directory is a source-code copy. It is not automatically Home Assistant's `/config/www/`, and HACS does not automatically distribute these files as Lovelace resources.** Installation remains manual until a distribution mechanism is implemented.
+**The repository's `www/` directory is a reviewed source copy.** HACS only installs
+files below `custom_components/garmin_connect/`, so both JS assets are also shipped
+inside `custom_components/garmin_connect/frontend/`. The integration serves this
+folder with Home Assistant's asynchronous static-path API. HACS upgrades replace
+the packaged files; no copying into `/config/www/` is needed. The static route is
+registered without modifying the user's Lovelace resource registry.
 
 ## Install in HA for parallel testing
 
-1. Keep the existing working Garmin view and a way to restore it. Replace only the two JS files in the actual HA directory, `/config/www/garmin_fitness_card/` (or `/homeassistant/www/garmin_fitness_card/`), when you deliberately choose to test these frontend versions. Keep the existing banner image in the same directory; it is not included in this source package.
-2. Under Settings → Dashboards → Resources, configure exactly one JavaScript module resource per file. Edit existing resources instead of adding duplicates:
+1. Install the integration version that includes the packaged frontend. Restart
+   Home Assistant so the updated integration registers its HTTP route.
+2. Open `/garmin_connect/frontend/garmin-fitness-card.js` and
+   `/garmin_connect/frontend/garmin-fitness-dashboard-card.js` on the HA server.
+   Both URLs must return JavaScript, not HTTP 404.
+3. Under Settings → Dashboards → Resources, **edit** the two old `/local/`
+   entries to the following URLs; do not create duplicate resources:
 
    ```text
-   /local/garmin_fitness_card/garmin-fitness-card.js?v=0.1.6-dev.2
-   /local/garmin_fitness_card/garmin-fitness-dashboard-card.js?v=0.1.1-dev.2
+   /garmin_connect/frontend/garmin-fitness-card.js
+   /garmin_connect/frontend/garmin-fitness-dashboard-card.js
    ```
 
-3. Hard-reload the HA view using `Ctrl+Shift+R`, and create a new card from `examples/garmin_fitness_dashboard_dev.yaml` in a dedicated test view. Retain the older YAML stack until all features are verified.
-4. Check all four graph ranges, all three expandable sections, the activity selector, data-quality messages, the budget explanation, and footer contrast.
+   Keep each resource's type as JavaScript module. These routes disable HTTP
+   cache headers, so their paths stay stable across HACS updates. Restart HA
+   and hard-reload the browser after an upgrade; JavaScript custom elements
+   cannot be hot-replaced inside an already-open tab.
+4. Add `examples/garmin_fitness_dashboard_dev.yaml` in a separate test view.
+   Retain the older YAML stack for rollback. The banner image remains a local,
+   user-managed asset at `/local/garmin_fitness_card/garmin_fitness_banner.png`.
+   Set `show_banner: false` if this image is unavailable.
+5. Verify the graph's four ranges, three expandable sections, the selector,
+   insights, ACWR explanation, data quality, and footer contrast.
+
+Rollback: switch the two resource URLs back to the previous `/local/` paths,
+then hard-reload. Do not delete the previous working JS files during testing.
 
 ## Observed in Home Assistant
 
@@ -35,8 +56,8 @@ Status: The frontend was tested alongside the existing dashboard in a real Home 
 ## Limitations and next steps
 
 - Frontend and backend data can update at different times. Explain a difference as expected only when its underlying cause is displayed and verified; investigate unexplained differences further.
-- This frontend commit does not change the calculation model, `ha-garmin`, the integration manifest, or the published beta.
-- Review and test frontend distribution and version handling separately before promoting `dev` to `beta`.
+- This distribution change adds an HTTP dependency and bumps only dev's integration manifest. It does not change the calculation model, `ha-garmin`, or the published beta.
+- Test packaged HTTP URLs, resource migration, and rollback in HA before promoting `dev` to `beta`.
 
 ## Local checks
 
