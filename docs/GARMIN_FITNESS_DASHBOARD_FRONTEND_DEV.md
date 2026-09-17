@@ -1,46 +1,46 @@
-# Garmin Fitness – JS-dashboard (frontend dev)
+# Garmin Fitness – JS dashboard (frontend dev)
 
-Status: frontend testad parallellt i en riktig Home Assistant-installation den 17 september 2026. Kod läggs endast på `dev`; det här är ingen HACS-release och varken `beta` eller `main` ska påverkas. Backend `3.0.35-beta.1` är separat.
+Status: The frontend was tested alongside the existing dashboard in a real Home Assistant installation on September 17, 2026. This code is added only to `dev`; it is not a HACS release and must not affect `beta` or `main`. Backend `3.0.35-beta.1` is separate.
 
-## Arkitektur
+## Architecture
 
-- `www/garmin_fitness_card/garmin-fitness-dashboard-card.js`: sammanhållen presentation av insikter, datakvalitet, senaste aktivitet, budget och passutvärdering. Version `0.1.1-dev.2`.
-- `www/garmin_fitness_card/garmin-fitness-card.js`: separat, beständigt monterat grafkort för Recorder/LTS och 7/28/42/90 dagar samt tre expandrar. Version `0.1.6-dev.2`.
-- Beräkningar sker endast i backend. Dashboarden läser Home Assistant-entiteter, inte Garmins API direkt.
-- Grafkortet monteras en gång; HA-state-uppdateringar får inte återskapa det eller återställa period/expander-val.
+- `www/garmin_fitness_card/garmin-fitness-dashboard-card.js`: unified presentation of insights, data quality, recent activity, budget, and activity evaluation. Version `0.1.1-dev.2`.
+- `www/garmin_fitness_card/garmin-fitness-card.js`: independently mounted, persistent graph card for Recorder/LTS, the 7/28/42/90-day ranges, and three expandable sections. Version `0.1.6-dev.2`.
+- Calculations remain exclusively in the backend. The dashboard reads Home Assistant entities and does not call the Garmin API directly.
+- The graph card is mounted once. HA state updates must not recreate it or reset the selected range or expanded sections.
 
-**Repo-katalogen `www/` är en källkodskopia, inte automatiskt HA:s `/config/www/` och distribueras inte automatiskt till Lovelace av HACS.** Installation är manuell tills en separat distributionslösning är införd.
+**The repository's `www/` directory is a source-code copy. It is not automatically Home Assistant's `/config/www/`, and HACS does not automatically distribute these files as Lovelace resources.** Installation remains manual until a distribution mechanism is implemented.
 
-## Installera i HA för parallelltest
+## Install in HA for parallel testing
 
-1. Behåll din befintliga fungerande Garmin-vy och eventuell återställningsmöjlighet. Ersätt bara de två JS-filerna i HA:s riktiga `/config/www/garmin_fitness_card/` (eller `/homeassistant/www/garmin_fitness_card/`) när du uttryckligen väljer att prova frontend-versionerna. Behåll befintlig bannerfil i samma katalog; den ingår inte i det här kodpaketet.
-2. Under Inställningar → Dashboards → Resurser, använd exakt en JavaScript-modulresurs per fil (redigera redan befintliga resurser, skapa inte dubbletter):
+1. Keep the existing working Garmin view and a way to restore it. Replace only the two JS files in the actual HA directory, `/config/www/garmin_fitness_card/` (or `/homeassistant/www/garmin_fitness_card/`), when you deliberately choose to test these frontend versions. Keep the existing banner image in the same directory; it is not included in this source package.
+2. Under Settings → Dashboards → Resources, configure exactly one JavaScript module resource per file. Edit existing resources instead of adding duplicates:
 
    ```text
    /local/garmin_fitness_card/garmin-fitness-card.js?v=0.1.6-dev.2
    /local/garmin_fitness_card/garmin-fitness-dashboard-card.js?v=0.1.1-dev.2
    ```
 
-3. Ladda om HA-vyn hårt med `Ctrl+Shift+R` och skapa ett separat kort från `examples/garmin_fitness_dashboard_dev.yaml`. Behåll den äldre YAML-stacken tills du har verifierat allt.
-4. Kontrollera grafens fyra perioder, alla tre expandrar, passväljaren, datakvalitetsmeddelanden, budgetförklaringen och versionstexternas kontrast.
+3. Hard-reload the HA view using `Ctrl+Shift+R`, and create a new card from `examples/garmin_fitness_dashboard_dev.yaml` in a dedicated test view. Retain the older YAML stack until all features are verified.
+4. Check all four graph ranges, all three expandable sections, the activity selector, data-quality messages, the budget explanation, and footer contrast.
 
-## Bekräftade observationer i HA
+## Observed in Home Assistant
 
-- Faktisk TRIMP 63,4, budgeträknad TRIMP 0,0 och lågintensivt undantagen TRIMP 63,4 visades samtidigt. Det visar den observerade uppdelningen, inte att historiken har skrivits om.
-- Faktisk ACWR 2,48 och planeringens ACWR 1,81 har olika underlag: 63,4 TRIMP undantas i planeringen. Presenteras som två separata värden, inte som automatiskt synkfel. Om ett sådant underlag saknas ska vi inte gissa orsaken.
-- Budget 0 TRIMP beror här på ACWR-gränsen; texten ska inte säga att budgeten är förbrukad.
-- Versionsfötter har läsbar HA-temafärg och 12 px text.
-- Test i HA: grafen renderar, perioderna 7/28/42/90 och expandrarna fungerar; insikter, budget och passutvärdering visas.
+- Actual TRIMP 63.4, budget-consuming TRIMP 0.0, and excluded low-intensity TRIMP 63.4 were displayed together. This confirms the observed breakdown; it does not mean training history was rewritten.
+- Actual ACWR 2.48 and planning ACWR 1.81 use different inputs: 63.4 TRIMP is excluded from planning. Present them as separate measurements, not as an automatic synchronization error. Do not guess the explanation if the supporting data is unavailable.
+- The 0 TRIMP training budget is limited here by the ACWR threshold; the text must not claim that the budget has already been consumed.
+- Version footers use a readable HA theme text color and 12 px text.
+- In-HA testing confirmed rendering of the graph, working 7/28/42/90-day ranges and expandable sections, and visible insights, budget, and activity evaluation.
 
-## Begränsningar och fortsättning
+## Limitations and next steps
 
-- Frontend- och backend-data kan uppdateras vid olika tidpunkter. Endast visad, verifierad underlagsskillnad förklaras som förväntad; oklara differenser kräver vidare undersökning.
-- Ingen ändring av beräkningsmodellen, `ha-garmin`, integrationens manifest eller publicerad beta via denna frontend-commit.
-- Gör separat kodgranskning och test av frontend-distribution och versionshantering innan `dev → beta`.
+- Frontend and backend data can update at different times. Explain a difference as expected only when its underlying cause is displayed and verified; investigate unexplained differences further.
+- This frontend commit does not change the calculation model, `ha-garmin`, the integration manifest, or the published beta.
+- Review and test frontend distribution and version handling separately before promoting `dev` to `beta`.
 
-## Lokal kontroll
+## Local checks
 
-Från repots rot, med Node.js installerat:
+From the repository root, with Node.js installed:
 
 ```bash
 node --check www/garmin_fitness_card/garmin-fitness-card.js
@@ -48,4 +48,4 @@ node --check www/garmin_fitness_card/garmin-fitness-dashboard-card.js
 node www/garmin_fitness_card/tests/dashboard.test.cjs
 ```
 
-Smoke-testerna granskar budgettext, ACWR-förklaring, HTML-escaping, insikter, aktivitet och beständig grafinstans. De ersätter inte fullständiga webbläsar- eller integrationstester.
+The smoke tests cover budget messaging, ACWR explanations, HTML escaping, insights, activity evaluation, and a persistent graph instance. They do not replace complete browser or integration tests.
