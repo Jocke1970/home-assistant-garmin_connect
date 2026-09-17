@@ -1,0 +1,9 @@
+# Parallell test: lägg som NYTT kort i en separat Lovelace-vy.
+# Kräver befintligt fungerande grafkort v0.1.5 och ny dashboardresurs.
+type: custom:garmin-fitness-dashboard-card
+graph_days: 90
+show_banner: true
+show_insights: true
+show_graph: true
+show_budget: true
+show_activity_evaluation: true
