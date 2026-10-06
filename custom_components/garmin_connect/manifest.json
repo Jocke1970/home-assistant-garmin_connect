@@ -8,6 +8,9 @@
     "@cyberjunky"
   ],
   "config_flow": true,
+  "dependencies": [
+    "http"
+  ],
   "documentation": "https://github.com/cyberjunky/home-assistant-garmin_connect",
   "integration_type": "service",
   "iot_class": "cloud_polling",
@@ -17,7 +20,7 @@
   ],
   "quality_scale": "gold",
   "requirements": [
-    "ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@a10bfccd947b5dfb4437b63f9a813083e19eb978"
+    "ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@4104eda29a994958fb0ef0d2de3292ab335ab80f"
   ],
-  "version": "3.0.35-beta.1"
+  "version": "2026.10.0b1"
 }
