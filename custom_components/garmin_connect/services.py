@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import voluptuous as vol
+import probatio as vol
 from aiohttp import ClientError
 from ha_garmin import GarminConnectError
 from homeassistant.core import (
