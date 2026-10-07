@@ -353,13 +353,28 @@ def test_badges_returns_count() -> None:
 
 
 def test_last_activity_returns_name_and_attributes() -> None:
-    """lastActivity sensor: state = activityName, attributes include activityId."""
+    """lastActivity exposes activity identity and activity-linked Gear."""
     desc = next(d for d in ACTIVITY_TRACKING_SENSORS if d.key == "lastActivity")
     coord = MagicMock()
     coord.data = mock_activity_data()
+    coord.data["lastActivity"]["linked_gear"] = [
+        {
+            "gear_uuid": "540c8eeacead401bb7101e870319387e",
+            "name": "Bontrager Ion 200 RT Flare",
+            "gear_type": "Bike Component",
+            "brand": "Bontrager",
+            "model": "Ion 200 RT Flare",
+            "custom_make_model": "Bontrager Ion 200 RT Flare",
+        }
+    ]
+    coord.data["lastActivity"]["linked_gear_count"] = 1
     sensor = GarminConnectSensor(coord, desc, "entry_id")
     assert sensor.native_value == "Morning Run"
     assert sensor.extra_state_attributes.get("activityId") == 12345
+    assert sensor.extra_state_attributes["linked_gear_count"] == 1
+    assert sensor.extra_state_attributes["linked_gear"][0]["name"] == (
+        "Bontrager Ion 200 RT Flare"
+    )
 
 
 def test_last_activities_count() -> None:
