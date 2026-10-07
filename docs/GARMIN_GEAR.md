@@ -6,22 +6,21 @@ The design goal is to keep Garmin source identities intact while presenting one 
 
 ## Current status
 
-Live-verified on 2026-09-13/14:
+Live-verified on 2026-10-07 with Garmin Connect `2026.10.0b2`:
 
-- Home Assistant integration: `3.0.33-gear-links-v1`
-- canonical HA development branch: `feature/garmin-fitness`
-- frontend card: `0.3.0-dev.16`
-- overview entity: `sensor.garmin_gear_overview_2`
-- schema: `1.0`
-- live snapshot after confirmed sensor linking:
-  - 51 Garmin source records
-  - 41 Garmin Gear records
-  - 6 registered Garmin-device records
-  - 4 recent ANT+/BLE sensor records
-  - 47 backend physical items after confirmed Gear <-> sensor linking
-  - 43 frontend physical cards after additional presentation-only grouping
+- release line: `dev → beta → main`
+- beta integration: `2026.10.0b2`
+- beta `ha-garmin` pin: `0703c4cf1df52d5c23d0a34696e4715c497a3e0d`
+- `ha-garmin` package version: `0.1.40`
+- latest-activity Gear enrichment is active through `linked_gear` and
+  `linked_gear_count`
+- real HA verification returned two linked items for one activity (running shoes
+  and a Garmin watch), proving the end-to-end Activity → Gear → HA attribute path
 
-The integration currently pins `ha-garmin` by exact Git commit. `ha-garmin` remains a separate runtime dependency and owns Garmin API access/normalization and shared Fitness/Insights logic; Home Assistant owns coordinators, entities, Gear presentation canonicalization and services.
+The integration pins `ha-garmin` by exact Git commit. `ha-garmin` owns Garmin
+API access, normalization, activity-type metadata and the canonical activity/Gear
+cache. Home Assistant owns coordinators, entities, Gear presentation
+canonicalization, services and frontend presentation.
 
 ## Scope
 
@@ -301,15 +300,23 @@ Frontend:
 
 Current validation line:
 
-- Home Assistant integration `3.0.33-gear-links-v1`
-- frontend `0.3.0-dev.16`
-- `ha-garmin` pinned by exact commit from the integration manifest
+- Home Assistant beta: `2026.10.0b2`
+- `ha-garmin` beta: `0.1.40`, pinned by exact commit from the integration manifest
+- activity-linked Gear: live-verified in Home Assistant
+- frontend: Garmin Fitness JS is packaged with the integration; the separate
+  Garmin Gear card remains maintained in the Home Assistant frontend repository
 
 ## Branch policy
 
-For the Home Assistant integration, `feature/garmin-fitness` is the canonical development line. Short-lived `fix/*` and feature branches should be merged back and removed when complete. `feature/garmin-insights-audit` remains intentionally separate while audit work is active.
+Long-lived development follows one path only:
 
-The Gear sensor-link fix must therefore land on `feature/garmin-fitness` before a test release is created. This policy was reinforced after an earlier Gear-link change was temporarily merged only into a side branch and was therefore absent from later Fitness releases.
+```text
+dev → beta → main
+```
+
+Feature/fix branches are temporary. Their useful changes must be merged into
+`dev`, promoted through `beta`, verified in Home Assistant, and then the side
+branch should be deleted. No feature branch is a parallel canonical release line.
 
 ## Next milestone: supervised sensor linking
 

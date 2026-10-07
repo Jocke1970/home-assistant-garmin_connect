@@ -1,3 +1,5 @@
+> **Historical / superseded note (2026-10-07):** The Garmin Fitness JS cards are now packaged by the integration and served from `/garmin_connect/frontend/`. Do not follow the manual `/local/garmin-fitness-card.js` installation below for a current HACS install; keep it only as recovery history.
+
 # Garmin Fitness graph resource — dev troubleshooting
 
 The approved Lovelace block already has `custom:garmin-fitness-card` between latest activity and daily budget. The red `Konfigurationsfel` in this position means that the graph component has not rendered. It does **not** identify the precise cause. The currently committed integration `www` directory does not contain `garmin-fitness-card.js`; integration assets are not automatically the HA `/local/` route.

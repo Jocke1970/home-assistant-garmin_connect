@@ -1,15 +1,16 @@
 # Garmin Fitness handoff status
 
-> Status: active integrated runtime on `feature/garmin-fitness`  
-> Updated: 2026-09-14  
-> Current HA development build: `3.0.33-gear-links-v1`  
-> Current `ha-garmin` pin: `c5c2d7e62bb7d9d311c11200ab325f435a2da5c9`
+> Status: active beta runtime  
+> Updated: 2026-10-07  
+> Home Assistant beta: `2026.10.0b2`  
+> `ha-garmin` beta pin: `0703c4cf1df52d5c23d0a34696e4715c497a3e0d`  
+> Release flow: `dev → beta → main`
 
 ## Source of truth
 
 Garmin Fitness calculations live in `ha-garmin`.
 
-`home-assistant-garmin_connect` owns Home Assistant orchestration only:
+`home-assistant-garmin_connect` owns Home Assistant orchestration:
 
 - config/options
 - coordinator lifecycle
@@ -17,183 +18,160 @@ Garmin Fitness calculations live in `ha-garmin`.
 - Recorder / long-term-statistics import
 - warm-up recovery policy
 - localized presentation/provenance
-- Lovelace-facing entity contracts
+- HACS-packaged frontend resources
 
-The Home Assistant coordinator must not maintain independent implementations of
+The Home Assistant integration must not maintain independent implementations of
 TRIMP, CTL, ATL, TSB, ACWR, ramp rate, strain, Load Focus, Activity Evaluation,
-or Daily Load Budget policy math.
+or the base Daily Load Budget math.
 
 ## Canonical Training runtime
 
-The permanent runtime uses the existing authenticated `GarminClient` through
-`GarminHistoryClient.fetch_trimp_training_context(...)`.
+Current canonical load source: **Banister TRIMP**.
 
-Canonical Training behavior is intentionally frozen while higher-level policy is
-validated:
+The installed runtime reports:
 
-- canonical load source: TRIMP
-- calculation window: 180 days
-- visible / persisted history window: final 90 days
-- CTL: 42-day EMA
-- ATL: 7-day EMA
-- TSB: CTL - ATL
-- ACWR: 7 / 28 days
-- ramp rate: CTL today - CTL 7 days ago
-- strain: bounded 0-21 presentation metric from canonical TRIMP
-- Load Focus: transparent Garmin Training Effect split
+- Fitness `algorithm_version: 2`
+- 90-day displayed history
+- 180-day calculation window with warm-up support
+- CTL 42 days / ATL 7 days
+- ACWR 7 / 28 days
+- Ramp Rate 7 days
+- Strain calibration from real historical sessions
 
-Missing source data remains explicit. A real rest day is zero load; an activity
-day with incomplete canonical inputs is not silently converted to zero.
+Algorithm v2 corrects Banister TRIMP by applying the sex-specific multiplicative
+coefficient in addition to the exponential constant:
 
-## Merged higher-level capabilities
+- male: `0.64 × exp(1.92 × HRR)`
+- female: `0.86 × exp(1.67 × HRR)`
 
-### Insights V1
+The correction was live-verified in Home Assistant: a male-profile day that had
+previously reported 84.0 TRIMP recalculated to 53.8 TRIMP.
 
-The deterministic Insights engine is merged and runs against the cached canonical
-Fitness context. Recovery inputs are fetched for the exact current HA-local date.
-Adjacent-day substitution is not used.
+Canonical history remains homogeneous TRIMP. Garmin Load, power TSS and pace
+proxy values are not silently mixed into CTL/ATL/TSB/ACWR history.
 
-`sensor.garmin_insights_overview` exposes:
+## Insights and Daily Load Budget
 
-- stable result IDs / severity / confidence
-- localized Swedish/English presentation
-- raw evidence and provenance
-- `data_quality`
-- normalized recovery / Training / Load Focus snapshots
-- compact recent-activity context
-- the current Daily Load Budget payload
+Insights Rules V1 remain deterministic and presentation-neutral in
+`ha-garmin`.
 
-Regular Training Readiness and Morning Training Readiness remain separate source
-fields. Snapshot completeness accepts either exact-date readiness source.
-
-### Activity Evaluation
-
-Recent Activity Evaluation is merged. The HA runtime evaluates the five newest
-activities from the cached Fitness context and provides a local selector so the
-user can switch activity without refetching Garmin.
-
-For supported cycling/power activities it can cache detail samples and expose
-best-power windows plus conservative estimated VO2max / FTP when the required
-inputs and duration are present. These are estimates, not Garmin-native or lab
-measurements.
-
-The selected activity's `max_hr` is the pass maximum. Configured Fitness maximum
-heart rate is exposed separately as `user_max_hr`.
-
-### Daily Load Budget V1
-
-Daily Load Budget V1 is merged as an advisory workload-planning heuristic. It
-reuses the canonical Fitness history and simulates today's total TRIMP against
-four structural constraints:
-
-- ACWR, normal hard limit `1.30`
-- Strain
-- TSB floor
-- Ramp Rate ceiling
-
-Established adverse Insights states may reduce only the remaining capacity.
-Favourable recovery never raises the structural ceiling.
-
-V1 deliberately returns zero remaining capacity when the current state already
-violates the active structural constraint. This behavior is now known to be too
-binary in one live pattern: ACWR can remain above `1.30` while TSB, Ramp and
-Strain have otherwise normalized. That is treated as a budget-policy limitation,
-not as a reason to change the canonical Fitness formulas.
-
-## Reliability fixes merged after the original handoff
-
-The current Fitness line also includes:
-
-- exact-current-day RHR fallback from Garmin daily summary when historical RHR
-  has not propagated yet
-- narrow cross-service shadow-activity suppression
-- repeated shadow-session cluster suppression while preserving complete real
-  overlapping activities
-- Daily Load Budget exhausted-capacity rounding fix
-- Activity Evaluation pass-max-HR vs configured-max-HR separation
-- restored confirmed Garmin Gear ↔ sensor links on the current Fitness line
-
-No TRIMP / CTL / ATL / TSB / ACWR formula was changed by those fixes.
-
-## Daily Load Budget V2 preview
-
-A V2 policy experiment exists only in `ha-garmin` on:
+The current Home Assistant budget uses planning policy v2:
 
 ```text
-experiment/daily-budget-v2-preview
+planning_mode: load_priority
+planning_policy_version: 2
 ```
 
-It is intentionally not exported through the public Fitness API and is not wired
-into Home Assistant. V1 remains authoritative in HA.
+Load Priority selects a source per sport for **intensity classification**.
+Clearly low-intensity activity may be excluded from the synthetic planning
+day's budget consumption. Its real TRIMP remains in canonical history.
 
-The preview introduces a conservative `reentry` mode only when V1 has zero
-capacity solely because ACWR is already above its normal limit. Re-entry requires:
+Important budget attributes include:
 
-- TSB >= 0
-- Ramp Rate <= 0
-- no `recovery_caution`
-- no `insufficient_or_stale_data`
+- `canonical_current_load`
+- `budget_consuming_load`
+- `excluded_low_intensity_load`
+- `low_intensity_activity_count`
+- `training_activity_count`
+- `unknown_intensity_activity_count`
+- `activity_decisions`
 
-When eligible, the preview keeps the existing TSB and Ramp constraints, applies
-a light Strain ceiling of `4.0`, and guards projected ACWR to at most 5% above
-its already-high current value.
+This is a planning model, not a medical recommendation and not a rewrite of the
+actual training history.
 
-The preview branch passed formatting, Ruff, mypy, Python 3.11/3.12/3.13 tests,
-and package build. It remains observation-only until enough natural live states
-have been compared with V1.
+## Activity evaluation
 
-## Data-quality semantics
+Activity Evaluation is local and deterministic. The HA selector exposes recent
+activities while the backend evaluates the selected activity without a new
+Garmin login or a second training-history database.
 
-`*_available` on a recovery source means the exact-date source responded; it does
-not guarantee that every desired field in that payload is populated.
+The presentation text "after the activity" must be interpreted carefully:
+historical ACWR/Strain/TSB values are daily analytical values, not necessarily a
+stored intra-day snapshot immediately after each individual activity.
 
-Therefore `snapshot_complete` can be false while `sleep_available` or
-`hrv_available` is true. `data_quality.missing_sources`, `missing_fields`, and
-`stale_fields` are the authoritative explanation. Examples of required recovery
-fields include `resting_hr`, `hrv_last_night_avg`, `sleep_score`, and at least
-one exact-date Training Readiness value.
+## Activity-linked Gear
 
-A future UI polish item is to surface those missing field names directly instead
-of only showing the generic "incomplete insight data" message. That UI change is
-not implemented yet.
+`ha-garmin` owns the canonical activity/Gear cache.
 
-## Warm-up recovery and persistence
+The latest activity can expose:
 
-A blocker inside the visible 90-day window blocks the canonical series. An older
-blocker may be bypassed only when restarting after it still leaves the configured
-minimum complete warm-up period before the visible window.
+```yaml
+linked_gear_count: 2
+linked_gear:
+  - gear_uuid: ...
+    name: ...
+    gear_type: ...
+    brand: ...
+    model: ...
+    custom_make_model: ...
+```
 
-Current-state Fitness sensors retain stable unique IDs. Completed historical
-calendar days are imported to Recorder long-term statistics using the registered
-sensor entity IDs. The current day remains owned by the live sensor.
+This path was live-verified with `2026.10.0b2` in Home Assistant. The old
+`feature/garmin-insights-activity-load` branch is therefore superseded by the
+normal `dev → beta` line and can be removed after verification.
 
-## Diagnostic probe
+## Frontend distribution
 
-`fitness_probe.py` / `garmin_connect.fitness_probe` remains useful for raw,
-read-only Garmin diagnostics. Probe output can intentionally show raw source
-records that the canonical runtime later suppresses during normalization, so raw
-probe blockers must not be treated as proof that runtime normalization failed.
-
-## Branch hygiene
-
-After the September cleanup, completed feature/fix branches were removed. Active
-long-lived/reference branches in this repository are intentionally limited to:
+The Garmin Fitness graph and dashboard JavaScript files are packaged below:
 
 ```text
+custom_components/garmin_connect/frontend/
+```
+
+and served by the integration under:
+
+```text
+/garmin_connect/frontend/
+```
+
+Manual copies of those JS files into `/config/www` are legacy troubleshooting
+material, not the normal HACS installation path.
+
+The Garmin Fitness banner is still a user-managed local asset at:
+
+```text
+/local/garmin_fitness_card/garmin_fitness_banner.png
+```
+
+until it is deliberately packaged or replaced by a different asset strategy.
+
+## Home Assistant 2026.10
+
+Home Assistant 2026.10 changed config/service schema typing to `probatio`.
+The integration's schema imports were migrated accordingly and validated by
+HACS, Hassfest, pre-commit and Pytest before `2026.10.0b2`.
+
+## Branch and release hygiene
+
+Only these long-lived branches are canonical:
+
+```text
+dev
+beta
 main
-feature/garmin-fitness
-feature/garmin-insights-activity-load
-feature/garmin-insights-audit
 ```
 
-The deleted PR branches remain recoverable through Git history / merged PRs.
+Release procedure:
 
-## Next Fitness milestone
+1. implement and test on `dev`
+2. sync/reconcile `beta` history back into `dev`
+3. promote `dev → beta`
+4. require green CI
+5. publish `YYYY.MM.0bN` as a GitHub pre-release
+6. install that pre-release through HACS and verify in real Home Assistant
+7. promote `beta → main` only after real beta validation
+8. stable version is `YYYY.MM.0`
 
-Do not change the canonical Training formulas.
+Feature branches are temporary and should be deleted after their useful work is
+present in the canonical release line.
 
-The immediate milestone is continued live comparison of Daily Load Budget V1
-against the isolated V2 re-entry preview. If V2 remains conservative and useful
-across additional natural states, promote the policy deliberately in
-`ha-garmin`, add regression vectors, then pin/wire it in Home Assistant in a
-separate change.
+## Current next steps
+
+No Training formula change is required.
+
+Practical remaining polish:
+
+- soak-test `2026.10.0b2` before stable promotion
+- optionally normalize cosmetic whitespace/generic Garmin Gear names
+- decide whether to package the Garmin Fitness banner
+- continue supervised Gear sensor-linking work only through `dev`
