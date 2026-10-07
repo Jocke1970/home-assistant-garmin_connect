@@ -22,5 +22,5 @@
   "requirements": [
     "ha-garmin@git+https://github.com/Jocke1970/ha-garmin.git@0703c4cf1df52d5c23d0a34696e4715c497a3e0d"
   ],
-  "version": "2026.10.0b2"
+  "version": "2026.10.0b3"
 }

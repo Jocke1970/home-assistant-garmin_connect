@@ -44,9 +44,29 @@ const snapshot = {
   [e.acwr]: { state: '2.48', attributes: {} },
   [e.insights]: { state: 'warning', attributes: {
     snapshot_date: '2026-09-17',
-    presented_results: [{ title: '<script>alert(1)</script>', severity: 'warning',
-      message: 'Belastningen har ökat snabbt', icon: 'mdi:trending-up',
-      evidence: [{ code: 'acwr_above_spike_threshold', value: 2.48 }] }],
+    presented_results: [
+      { id: 'load_spike', title: '<script>alert(1)</script>', severity: 'warning',
+        message: 'Belastningen har ökat snabbt', icon: 'mdi:trending-up',
+        evidence: [{ code: 'acwr_above_spike_threshold', value: 2.48 }] },
+      { id: 'recovery_caution', title: 'Återhämtningssignalerna är begränsade',
+        severity: 'caution', message: 'Flera signaler pekar åt ett försiktigare håll.',
+        icon: 'mdi:heart-pulse', evidence: [
+          { code: 'body_battery_low', label: 'Body Battery låg', value: 10, threshold: 30 },
+          { code: 'hrv_below_balanced_baseline', label: 'HRV under balanserad baslinje',
+            value: 40, threshold: 43 },
+        ] },
+      { id: 'load_focus_imbalance', title: 'Träningsfokuset är ensidigt',
+        severity: 'info', message: 'Training Effect är koncentrerad till en belastningstyp.',
+        icon: 'mdi:chart-donut', evidence: [
+          { code: 'dominant_focus.low_aerobic', label: 'Dominerande träningsfokus: low aerobic',
+            value: 16.8, threshold: null },
+          { code: 'recent_focus_activity_count', label: 'Aktiviteter med Training Effect',
+            value: 8, threshold: 3 },
+          { code: 'dominance_ratio', label: 'Dominanskvot för träningsfokus',
+            value: 42, threshold: 1.5 },
+        ] },
+    ],
+    load_focus: { low_aerobic: 16.8, high_aerobic: 0.4, anaerobic: 0 },
     data_quality: { training_complete: true, load_focus_complete: true,
       missing_fields: ['recovery.resting_hr'], missing_sources: ['hrv'], stale_fields: [] },
     recent_activities: [{ date: '2026-09-17', activity_type: 'walking',
@@ -78,6 +98,15 @@ html = card._insightsHtml();
 assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
 assert.doesNotMatch(html, /<script>/);
 assert.match(html, /Återhämtningsunderlag ofullständigt/);
+assert.match(html, /Body Battery låg/);
+assert.match(html, /10 · gräns 30/);
+assert.match(html, /HRV under balanserad baslinje/);
+assert.match(html, /40 · gräns 43/);
+assert.match(html, /Träningsfokuset är ensidigt/);
+assert.match(html, /Låg aerob/);
+assert.match(html, /16,8/);
+assert.match(html, /8<\/strong> pass med Training Effect/);
+assert.match(html, /42,0× · gräns 1,5×/);
 assert.match(html, /Senaste aktivitet · Promenad/);
 html = card._evaluationHtml();
 assert.match(html, /Idag · Promenad/);
@@ -99,7 +128,7 @@ snapshot[e.acwr].state = '1.81';
 html = card._budgetHtml();
 assert.doesNotMatch(html, /orsaken är inte fastställd|Olika värden är därför förväntade/);
 snapshot[e.acwr].state = '2.48';
-assert.equal(card.cardVersion, '0.1.1-dev.2');
+assert.equal(card.cardVersion, '0.1.1-dev.3');
 assert.ok(sandbox.window.customCards.some((c) => c.type === 'garmin-fitness-dashboard-card'));
 console.log('PASS: frontend smoke assertions (budget, explanatory ACWR, XSS, insights, selection, evaluation, version)');
 
