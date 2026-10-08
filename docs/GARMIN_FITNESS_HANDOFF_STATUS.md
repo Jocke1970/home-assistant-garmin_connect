@@ -188,3 +188,38 @@ extensions and missing files. The installed `2026.10.0b3` beta is unchanged.
 
 Further planned work: token refresh durability, frontend cache-busting and
 selective upstream integration. These are not part of this hardening change.
+
+## Next gig: Activity Evaluation linked Gear presentation (planned, unreleased)
+
+The activity-linked Gear backend is already canonical in `ha-garmin`, and
+`linked_gear` / `linked_gear_count` were live-verified on **Last Activity**
+with beta `2026.10.0b2`. However, the **Activity Evaluation** sensor does not
+currently expose linked Gear for its selected activity, and the dashboard
+`garmin-fitness-dashboard-card.js` does not render Gear inside Passutvärdering.
+
+Implementation requirements:
+
+1. Resolve Gear against the **selected activity ID** (one of the recent
+   selectable activities), using the existing canonical `ha-garmin` cache.
+   Never reuse Last Activity's Gear unconditionally for historical selections.
+2. Add `linked_gear` and `linked_gear_count` for the selected activity to
+   Activity Evaluation's HA sensor attributes. Do not build a second Gear cache
+   or trigger extra Garmin API requests on every selection.
+3. Render a compact, light/theme-aware premium section **Utrustning som användes**
+   within Passutvärdering, with Gear name, optional custom make/model, and a
+   suitable equipment icon. Escape dynamic strings in JavaScript.
+4. Show an understated empty state where the selected activity genuinely has no
+   linked Gear; distinguish absent/unavailable linkage from confirmed empty Gear
+   when the backend can make that distinction.
+5. Regression-test activity switching (different Gear per activity), historical
+   activity selection, missing metadata, XSS escaping, and no new API/cache work.
+   Keep the existing graph card instance persistent on HA state refreshes.
+6. Rename or clarify **Efter passet (faktisk belastning)**: historical ACWR,
+   Strain and TSB come from an activity-day snapshot, not necessarily a value
+   measured immediately after the selected workout.
+
+Boundaries: presentation and a narrow data handoff only; no changes to
+canonical TRIMP, Load Priority calculations, or Gear history. Keep the
+packaged frontend and `www/garmin_fitness_card/` source copies synchronized.
+Implement on `dev`; verify tests/CI, then promote through `dev → beta → main`.
+Current `2026.10.0b3` remains the HA soak-test baseline.
