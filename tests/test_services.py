@@ -456,30 +456,109 @@ async def test_create_activity_defaults_to_now(mock_hass: MagicMock) -> None:
 
 
 async def test_upload_activity(mock_hass: MagicMock, tmp_path: Path) -> None:
-    """upload_activity must call client.upload_activity when the file exists."""
+    """Configured local FIT files can be uploaded."""
+    mock_hass.config.config_dir = str(tmp_path)
+    mock_hass.async_add_executor_job = AsyncMock(
+        side_effect=lambda fn, *args: fn(*args)
+    )
     await async_setup_services(mock_hass)
     handler = _get_handler(mock_hass, "upload_activity")
     client = _get_client(mock_hass)
-
     fit_file = tmp_path / "activity.fit"
     fit_file.write_bytes(b"fake fit data")
-
     call = MagicMock()
     call.data = {"file_path": str(fit_file)}
-
     await handler(call)
-
     client.upload_activity.assert_awaited_once_with(str(fit_file))
 
 
-async def test_upload_activity_file_not_found_raises(mock_hass: MagicMock) -> None:
-    """upload_activity must raise HomeAssistantError when file doesn't exist."""
+async def test_upload_activity_outside_allowlist_is_rejected(
+    mock_hass: MagicMock, tmp_path: Path
+) -> None:
+    """Files outside config and allowed paths must not reach Garmin."""
+    config = tmp_path / "config"
+    config.mkdir()
+    outside = tmp_path / "secret.fit"
+    outside.write_bytes(b"private")
+    mock_hass.config.config_dir = str(config)
+    mock_hass.config.is_allowed_path.return_value = False
+    mock_hass.async_add_executor_job = AsyncMock(side_effect=lambda fn, *a: fn(*a))
     await async_setup_services(mock_hass)
     handler = _get_handler(mock_hass, "upload_activity")
-
     call = MagicMock()
-    call.data = {"file_path": "/nonexistent/activity.fit"}
+    call.data = {"file_path": str(outside)}
+    with pytest.raises(HomeAssistantError):
+        await handler(call)
+    _get_client(mock_hass).upload_activity.assert_not_awaited()
 
+
+async def test_upload_activity_symlink_escape_is_rejected(
+    mock_hass: MagicMock, tmp_path: Path
+) -> None:
+    """A symlink inside config must not bypass the directory boundary."""
+    config = tmp_path / "config"
+    config.mkdir()
+    outside = tmp_path / "secret.fit"
+    outside.write_bytes(b"private")
+    link = config / "linked.fit"
+    link.symlink_to(outside)
+    mock_hass.config.config_dir = str(config)
+    mock_hass.config.is_allowed_path.return_value = False
+    mock_hass.async_add_executor_job = AsyncMock(side_effect=lambda fn, *a: fn(*a))
+    await async_setup_services(mock_hass)
+    handler = _get_handler(mock_hass, "upload_activity")
+    call = MagicMock()
+    call.data = {"file_path": str(link)}
+    with pytest.raises(HomeAssistantError):
+        await handler(call)
+    _get_client(mock_hass).upload_activity.assert_not_awaited()
+
+
+async def test_upload_activity_bad_format_is_rejected(
+    mock_hass: MagicMock, tmp_path: Path
+) -> None:
+    """Even allowed paths must use supported activity extensions."""
+    mock_hass.config.config_dir = str(tmp_path)
+    mock_hass.async_add_executor_job = AsyncMock(side_effect=lambda fn, *a: fn(*a))
+    await async_setup_services(mock_hass)
+    handler = _get_handler(mock_hass, "upload_activity")
+    unsafe = tmp_path / "secrets.txt"
+    unsafe.write_text("private")
+    call = MagicMock()
+    call.data = {"file_path": str(unsafe)}
+    with pytest.raises(HomeAssistantError):
+        await handler(call)
+    _get_client(mock_hass).upload_activity.assert_not_awaited()
+
+
+async def test_upload_activity_allowlisted_external_fit(
+    mock_hass: MagicMock, tmp_path: Path
+) -> None:
+    """Explicit HA allowlisting permits FIT outside config."""
+    config = tmp_path / "config"
+    config.mkdir()
+    external = tmp_path / "external.fit"
+    external.write_bytes(b"fit")
+    mock_hass.config.config_dir = str(config)
+    mock_hass.config.is_allowed_path.return_value = True
+    mock_hass.async_add_executor_job = AsyncMock(side_effect=lambda fn, *a: fn(*a))
+    await async_setup_services(mock_hass)
+    handler = _get_handler(mock_hass, "upload_activity")
+    call = MagicMock()
+    call.data = {"file_path": str(external)}
+    await handler(call)
+    _get_client(mock_hass).upload_activity.assert_awaited_once_with(str(external))
+
+
+async def test_upload_activity_file_not_found_raises(
+    mock_hass: MagicMock, tmp_path: Path
+) -> None:
+    mock_hass.config.config_dir = str(tmp_path)
+    mock_hass.async_add_executor_job = AsyncMock(side_effect=lambda fn, *a: fn(*a))
+    await async_setup_services(mock_hass)
+    handler = _get_handler(mock_hass, "upload_activity")
+    call = MagicMock()
+    call.data = {"file_path": str(tmp_path / "missing.fit")}
     with pytest.raises(HomeAssistantError):
         await handler(call)
 
