@@ -1,8 +1,8 @@
 # Garmin Fitness handoff status
 
 > Status: active beta runtime  
-> Updated: 2026-10-07  
-> Home Assistant beta: `2026.10.0b2`  
+> Updated: 2026-10-08  
+> Home Assistant beta: `2026.10.0b3`  
 > `ha-garmin` beta pin: `0703c4cf1df52d5c23d0a34696e4715c497a3e0d`  
 > Release flow: `dev → beta → main`
 
@@ -175,3 +175,16 @@ Practical remaining polish:
 - optionally normalize cosmetic whitespace/generic Garmin Gear names
 - decide whether to package the Garmin Fitness banner
 - continue supervised Gear sensor-linking work only through `dev`
+
+## Upcoming development (not released)
+
+The active `dev` branch is being hardened ahead of a future beta. The
+`upload_activity` service now restricts input paths to files within the HA
+configuration directory or paths permitted by `allowlist_external_dirs`.
+Symlinks are resolved before checking permission and only FIT, GPX and TCX
+extensions are accepted. Blocking file checks run in Home Assistant's executor.
+Coverage includes allowed files, external paths, symlink escape, unsupported
+extensions and missing files. The installed `2026.10.0b3` beta is unchanged.
+
+Further planned work: token refresh durability, frontend cache-busting and
+selective upstream integration. These are not part of this hardening change.
