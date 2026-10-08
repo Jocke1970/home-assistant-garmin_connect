@@ -1,12 +1,12 @@
 # Garmin Fitness – JS dashboard (frontend dev)
 
 Status: The packaged frontend is now part of the HACS integration and is
-beta-validated in `2026.10.0b2`. This document retains the original dev-test
+beta-validated through `2026.10.0b3`. This document retains the original dev-test
 history where useful.
 
 ## Architecture
 
-- `www/garmin_fitness_card/garmin-fitness-dashboard-card.js`: unified presentation of insights, data quality, recent activity, budget, and activity evaluation. Version `0.1.1-dev.2`.
+- `www/garmin_fitness_card/garmin-fitness-dashboard-card.js`: unified presentation of insights, data quality, recent activity, budget, and activity evaluation. Version `0.1.1-dev.3`.
 - `www/garmin_fitness_card/garmin-fitness-card.js`: independently mounted, persistent graph card for Recorder/LTS, the 7/28/42/90-day ranges, and three expandable sections. Version `0.1.6-dev.2`.
 - Calculations remain exclusively in the backend. The dashboard reads Home Assistant entities and does not call the Garmin API directly.
 - The graph card is mounted once. HA state updates must not recreate it or reset the selected range or expanded sections.
