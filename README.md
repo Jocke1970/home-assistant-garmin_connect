@@ -247,10 +247,15 @@ All sensors are created under a single "Garmin Connect" device. Entity IDs follo
 
 | Sensor | Description |
 |--------|-------------|
-| Last Activity | Most recent activity with details |
+| Last Activity | Most recent activity with details, including activity-linked Gear when Garmin reports it |
 | Last Activities | Recent activities list (attributes) |
 | Last Workout / Workouts | Scheduled/planned training sessions |
 | Last Synced | Last device sync timestamp |
+
+When available, `Last Activity` includes `linked_gear` and `linked_gear_count`.
+Each linked Gear entry uses compact normalized fields such as `gear_uuid`, `name`,
+`gear_type`, `brand`, `model`, and `custom_make_model`. The lookup reuses the
+activity-driven Gear cache in `ha-garmin`; it does not create a second Gear poller.
 
 ### Blood Pressure
 

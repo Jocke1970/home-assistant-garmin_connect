@@ -1,3 +1,5 @@
+> **Historical / superseded note (2026-10-07):** This describes the pre-packaged-card recovery path. Current HACS releases ship the Garmin Fitness cards inside `custom_components/garmin_connect/frontend/` and serve them from `/garmin_connect/frontend/`.
+
 # Garmin Fitness graph card — dev restore
 
 The complete Load Priority Lovelace example at `examples/garmin_fitness_budget_load_priority_dev.yaml` only contains the standalone budget card. The separate **complete** Lovelace stack distributed for UI testing contains `custom:garmin-fitness-card` (days 90; show_title true) between Latest Activity and Daily Budget. This is an independent JavaScript custom card; the budget YAML cannot implement or fix its graphs.

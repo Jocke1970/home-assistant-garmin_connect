@@ -1,11 +1,11 @@
 # Garmin Insights — Home Assistant handoff
 
-**Status:** V1 runtime + presentation merged into `feature/garmin-fitness`  
-**Updated:** 2026-09-14  
-**Scope:** exact-date snapshot orchestration, one overview sensor, localized presentation, and Daily Load Budget handoff
+**Status:** active beta runtime in `2026.10.0b2`  
+**Updated:** 2026-10-07  
+**Scope:** exact-date snapshot orchestration, one overview sensor, localized presentation, and priority-aware Daily Load Budget handoff
 
-The old `feature/garmin-insights-v1` implementation branch has been merged and
-removed. `feature/garmin-fitness` is the active integrated line.
+Canonical development now follows `dev → beta → main`. Historical Insights
+feature branches are not release lines.
 
 ## Runtime flow
 
@@ -21,7 +21,7 @@ ha-garmin build_insight_snapshot()
 ha-garmin evaluate_insights()
   ↓
 InsightsCoordinator
-  ├─ Daily Load Budget V1
+  ├─ priority-aware Daily Load Budget (planning policy v2)
   ↓
 HA presentation adapter
   ↓
@@ -127,48 +127,32 @@ The raw result payload is preserved unchanged. The HA presentation adapter maps
 stable IDs/codes to Swedish or English labels/messages but does not change rule
 priority, severity, confidence, thresholds, or conflicts.
 
-## Daily Load Budget V1
+## Daily Load Budget — current runtime
 
-Insights also calculates the current advisory Daily Load Budget from the same
-canonical Fitness context. The HA budget sensor exposes remaining recommended
-TRIMP plus transparent structural/recovery attributes.
+The structural budget still evaluates ACWR, Strain, TSB and Ramp Rate from the
+canonical Fitness context.
 
-Budget V1 uses the most conservative simulated structural ceiling across:
+Home Assistant then applies priority-aware planning policy v2. Load Priority
+selects a source per activity for intensity classification; clearly low-intensity
+activity can be excluded from today's **planning** consumption while its actual
+Banister TRIMP remains in canonical Training history.
+
+The budget sensor therefore distinguishes:
 
 ```text
-ACWR
-Strain
-TSB
-Ramp Rate
+canonical_current_load
+budget_consuming_load
+excluded_low_intensity_load
 ```
 
-The normal ACWR hard limit is `1.30`. If today's zero/additional-load state is
-already beyond that limit, V1 can legitimately return zero remaining capacity.
-Live observation has shown that this can remain overly binary when ACWR is high
-because the chronic baseline is still low while TSB, Ramp, and Strain have
-otherwise normalized.
+and exposes transparent per-activity `activity_decisions`.
 
-That finding is being handled as a **budget-policy** question. The canonical
-Fitness formulas remain unchanged.
+The canonical series remains TRIMP. Power TSS, Garmin Load and pace proxy are
+not summed into the Training history.
 
-## V2 re-entry preview
-
-An isolated policy experiment exists in `ha-garmin` on
-`experiment/daily-budget-v2-preview`. It is not wired into HA.
-
-The preview considers a small re-entry budget only when V1 is blocked solely by
-already-high ACWR and the other current signals are calm:
-
-- TSB >= 0
-- Ramp <= 0
-- no `recovery_caution`
-- no `insufficient_or_stale_data`
-
-It then applies a light Strain ceiling (`4.0`), the existing TSB/Ramp constraints,
-and a projected-ACWR guard of at most +5% from the already-high current value.
-
-V1 remains authoritative until the preview has enough live validation and is
-explicitly promoted through the library and HA dependency pin.
+The ACWR hard ceiling can still be the limiting factor. A zero remaining budget
+means zero additional **modelled training budget**, not a prohibition on normal
+movement.
 
 ## Fitness handoff cache
 
@@ -184,7 +168,7 @@ Strain calibration resolved. No Fitness formula or entity contract is changed.
 
 ## Scope guard
 
-Insights V1 / Budget V1 changes do not redefine:
+Insights V1 / planning-budget changes do not redefine:
 
 - TRIMP / CTL / ATL / TSB / ACWR formulas
 - existing Fitness entity IDs
@@ -192,4 +176,5 @@ Insights V1 / Budget V1 changes do not redefine:
 - Garmin Gear identity/category policy
 
 The current validation focus is natural rule combinations, explicit data-quality
-presentation, and the separate Daily Load Budget V2 policy experiment.
+presentation, priority-aware budget behavior, and real Home Assistant regression
+testing through the normal `dev → beta → main` release path.

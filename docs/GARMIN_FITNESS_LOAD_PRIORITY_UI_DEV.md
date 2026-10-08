@@ -1,3 +1,5 @@
+> **Historical / superseded note (2026-10-07):** The UI described here was the dev staging design. The priority-aware budget and activity evaluation are now part of the packaged Garmin Fitness dashboard used with `2026.10.0b2`; the backend contract remains useful reference.
+
 # Garmin Fitness — Load Priority UI (`dev`)
 
 Status: **Lovelace UI work prepared for review, not deployed to the user's Home Assistant**. `beta` and `main` are unchanged. Preserve the last known Garmin Fitness stack and its banner → Insights → conditional data quality → latest activity → existing graph card v0.1.5 → daily budget → activity evaluation order.

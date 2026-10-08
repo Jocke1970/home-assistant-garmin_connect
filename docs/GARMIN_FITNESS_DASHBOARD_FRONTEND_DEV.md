@@ -1,6 +1,8 @@
 # Garmin Fitness – JS dashboard (frontend dev)
 
-Status: The frontend was tested alongside the existing dashboard in a real Home Assistant installation on September 17, 2026. This code is added only to `dev`; it is not a HACS release and must not affect `beta` or `main`. Backend `3.0.35-beta.1` is separate.
+Status: The packaged frontend is now part of the HACS integration and is
+beta-validated in `2026.10.0b2`. This document retains the original dev-test
+history where useful.
 
 ## Architecture
 

@@ -1,10 +1,10 @@
-/* Garmin Fitness Dashboard v0.1.1-dev.2 — presentation only.
+/* Garmin Fitness Dashboard v0.1.1-dev.3 — presentation only.
  * Keeps the existing garmin-fitness-card graph as a separate, persistent element.
  * No backend calculations, external libraries or build step.
  */
 (() => {
   'use strict';
-  const VERSION = '0.1.1-dev.2';
+  const VERSION = '0.1.1-dev.3';
   const TAG = 'garmin-fitness-dashboard-card';
   const DEFAULTS = Object.freeze({
     insights: 'sensor.garmin_insights_overview',
@@ -195,11 +195,13 @@
               'positive_ramp_rate', 'negative_ramp_rate'].includes(e.code) && finite(e.value))
             .map((e) => `${e.code.includes('acwr') ? 'ACWR' : 'Ramp'} ${fmt(e.value, 2)}`)
             .join(' · ') : '';
+          const detail = this._insightDetail(r, a, evidence);
           return `<div class="insight ${index === 0 ? 'primary' : ''} ${esc(r.severity || '')}"
             data-more-info="${esc(this._config.entities.insights)}" role="button" tabindex="0">
               ${icon(r.icon || 'mdi:lightbulb-outline', 'insight-icon')}
               <div class="insight-text"><strong>${esc(r.title || 'Insikt')}</strong>
                 <p>${esc(r.message || '')}</p>${context ? `<small>${esc(context)}</small>` : ''}
+                ${detail}
               </div></div>`;
         }).join('');
       }
@@ -224,6 +226,91 @@
 
     _panel(ic, heading, detail) {
       return `<div class="notice">${icon(ic)}<div><strong>${esc(heading)}</strong><p>${esc(detail)}</p></div></div>`;
+    }
+    _insightDetail(result, attributes, evidence) {
+      if (result?.id === 'load_focus_imbalance') {
+        return this._focusInsightHtml(attributes, evidence);
+      }
+      if (result?.id === 'recovery_caution') {
+        return this._recoveryInsightHtml(evidence);
+      }
+      return '';
+    }
+
+    _evidence(evidence, code) {
+      return Array.isArray(evidence)
+        ? evidence.find((item) => item && item.code === code) || null
+        : null;
+    }
+
+    _focusInsightHtml(attributes, evidence) {
+      const focus = attributes?.load_focus || {};
+      const low = number(focus.low_aerobic);
+      const high = number(focus.high_aerobic);
+      const anaerobic = number(focus.anaerobic);
+      const values = [low, high, anaerobic].map((value) => value ?? 0);
+      const total = values.reduce((sum, value) => sum + Math.max(0, value), 0);
+      const countEvidence = this._evidence(evidence, 'recent_focus_activity_count');
+      const ratioEvidence = this._evidence(evidence, 'dominance_ratio');
+      const count = number(countEvidence?.value);
+      const ratio = number(ratioEvidence?.value);
+      const ratioThreshold = number(ratioEvidence?.threshold);
+
+      if (total <= 0 && count === null && ratio === null) return '';
+
+      const lowPct = total > 0 ? (Math.max(0, values[0]) / total) * 100 : 0;
+      const highPct = total > 0 ? (Math.max(0, values[1]) / total) * 100 : 0;
+      const highEnd = lowPct + highPct;
+      const ring = total > 0
+        ? `<div class="focus-ring" style="background:conic-gradient(
+            var(--info-color,#00bceb) 0 ${lowPct.toFixed(2)}%,
+            var(--warning-color,#ff9800) ${lowPct.toFixed(2)}% ${highEnd.toFixed(2)}%,
+            var(--error-color,#f44336) ${highEnd.toFixed(2)}% 100%)">
+            <div><strong>${fmt(total)}</strong><span>TE</span></div></div>`
+        : '';
+
+      const ratioText = ratio !== null
+        ? `${fmt(ratio, 1)}×${ratioThreshold !== null ? ` · gräns ${fmt(ratioThreshold, 1)}×` : ''}`
+        : '–';
+
+      return `<div class="insight-detail focus-detail">
+        <div class="focus-main">${ring}<div class="focus-legend">
+          ${this._focusLegend('low', 'Låg aerob', low)}
+          ${this._focusLegend('high', 'Hög aerob', high)}
+          ${this._focusLegend('anaerobic', 'Anaerob', anaerobic)}
+        </div></div>
+        <div class="focus-meta">
+          <span><strong>${count !== null ? fmt(count, 0) : '–'}</strong> pass med Training Effect</span>
+          <span><strong>${esc(ratioText)}</strong> dominanskvot</span>
+        </div></div>`;
+    }
+
+    _focusLegend(kind, label, value) {
+      return `<div class="focus-legend-row"><i class="${esc(kind)}"></i>
+        <span>${esc(label)}</span><strong>${fmt(value)}</strong></div>`;
+    }
+
+    _recoveryInsightHtml(evidence) {
+      const items = [
+        this._evidence(evidence, 'body_battery_low'),
+        this._evidence(evidence, 'hrv_below_balanced_baseline'),
+      ].filter((item) => item && finite(item.value));
+
+      if (!items.length) return '';
+
+      return `<div class="insight-detail recovery-detail">${items.map((item) => {
+        const value = number(item.value);
+        const threshold = number(item.threshold);
+        const width = threshold !== null && threshold > 0 && value !== null
+          ? Math.max(0, Math.min(100, (value / threshold) * 100))
+          : 0;
+        const thresholdText = threshold !== null ? ` · gräns ${fmt(threshold, 0)}` : '';
+        return `<div class="recovery-meter">
+          <div class="recovery-meter-head"><span>${esc(item.label || item.code || 'Återhämtning')}</span>
+            <strong>${fmt(value, 0)}${esc(thresholdText)}</strong></div>
+          ${threshold !== null ? `<div class="evidence-track"><div style="width:${width.toFixed(1)}%"></div></div>` : ''}
+        </div>`;
+      }).join('')}</div>`;
     }
 
     _budgetHtml() {
@@ -342,8 +429,13 @@
         .insight.primary{min-height:104px;align-items:center;justify-content:center;text-align:center;flex-direction:column;gap:5px;padding:20px 14px}
         .insight-icon{--mdc-icon-size:21px;color:var(--info-color,#03a9f4);flex-shrink:0}.insight.warning .insight-icon{color:var(--error-color,#f44336)}
         .insight.caution .insight-icon{color:var(--warning-color,#ff9800)}.insight.positive .insight-icon{color:var(--success-color,#4caf50)}
-        .insight-text{min-width:0;flex:1}.insight strong,.section-title strong,.evaluation-header strong{font-size:14px}.insight p,.section-title p,.notice p{margin:3px 0 0;font-size:12px;line-height:1.45}
-        .insight small{font-size:12px;display:block;margin-top:4px}.quality{display:flex;gap:9px;align-items:flex-start;padding:8px 13px;color:var(--warning-color,#b58900);border-bottom:1px solid var(--divider-color,#ddd)}
+        .insight-text{min-width:0;flex:1}.insight.primary .insight-text{width:100%;max-width:430px}.insight strong,.section-title strong,.evaluation-header strong{font-size:14px}.insight p,.section-title p,.notice p{margin:3px 0 0;font-size:12px;line-height:1.45}
+        .insight small{font-size:12px;display:block;margin-top:4px}.insight-detail{width:100%;margin-top:10px;padding-top:10px;border-top:1px solid var(--divider-color,#ddd)}
+        .focus-main{display:flex;align-items:center;justify-content:center;gap:16px}.focus-ring{width:68px;height:68px;border-radius:50%;padding:8px;flex:0 0 68px}.focus-ring>div{height:100%;border-radius:50%;background:var(--ha-card-background,var(--card-background-color,#fff));display:flex;flex-direction:column;align-items:center;justify-content:center}.focus-ring strong{font-size:15px}.focus-ring span{font-size:9px;color:var(--secondary-text-color)}
+        .focus-legend{min-width:150px;display:grid;gap:5px}.focus-legend-row{display:grid;grid-template-columns:9px 1fr auto;gap:7px;align-items:center;font-size:11px}.focus-legend-row i{width:8px;height:8px;border-radius:50%;background:var(--secondary-text-color)}.focus-legend-row i.low{background:var(--info-color,#00bceb)}.focus-legend-row i.high{background:var(--warning-color,#ff9800)}.focus-legend-row i.anaerobic{background:var(--error-color,#f44336)}.focus-legend-row span{color:var(--secondary-text-color)}.focus-legend-row strong{font-size:11px}
+        .focus-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-top:10px}.focus-meta span{font-size:10px;color:var(--secondary-text-color);line-height:1.35}.focus-meta strong{display:block;font-size:12px;color:var(--primary-text-color)}
+        .recovery-detail{display:grid;gap:10px}.recovery-meter-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;font-size:10px}.recovery-meter-head span{color:var(--secondary-text-color);text-align:left}.recovery-meter-head strong{font-size:11px;text-align:right;white-space:nowrap}.evidence-track{height:6px;margin-top:5px;border-radius:99px;background:rgba(128,128,128,.20);overflow:hidden}.evidence-track>div{height:100%;border-radius:99px;background:var(--warning-color,#ff9800)}
+        .quality{display:flex;gap:9px;align-items:flex-start;padding:8px 13px;color:var(--warning-color,#b58900);border-bottom:1px solid var(--divider-color,#ddd)}
         .quality strong{display:block;font-size:12px}.quality span{display:block;font-size:11px;color:var(--secondary-text-color);margin-top:2px}
         .recent,.notice{display:flex;gap:11px;align-items:center;padding:12px 14px}.recent{cursor:pointer}.recent>ha-icon{color:var(--info-color,#03a9f4)}
         .recent strong,.notice strong{font-size:13px}.recent span{display:block;font-size:11px;color:var(--secondary-text-color);margin-top:3px;line-height:1.4}
@@ -362,7 +454,7 @@
         .assessment{margin-top:17px}.assessment strong{font-size:14px}.assessment p{font-size:13px;color:var(--secondary-text-color);line-height:1.45;margin:5px 0}.mini-title{margin-top:17px;font-size:12px;font-weight:600;color:var(--secondary-text-color)}
         .eval-body .metric{text-align:left}.source{margin:8px 0}.source strong{color:var(--primary-text-color)}footer{text-align:right;font-size:12px;font-weight:600;line-height:1.4;color:var(--primary-text-color,#242424);opacity:1;padding:9px 12px}
         [data-more-info]:focus-visible,select:focus-visible{outline:2px solid var(--info-color,#00bceb);outline-offset:-2px}
-        @media(max-width:360px){.breakdown{gap:3px}.metrics{gap:3px}.metric strong{font-size:12px}.evaluation-header select{max-width:51%}}`;
+        @media(max-width:360px){.breakdown{gap:3px}.metrics{gap:3px}.metric strong{font-size:12px}.evaluation-header select{max-width:51%}.focus-main{gap:10px}.focus-ring{width:60px;height:60px;flex-basis:60px}.focus-legend{min-width:135px}.focus-meta{grid-template-columns:1fr}}`;
     }
   }
 
