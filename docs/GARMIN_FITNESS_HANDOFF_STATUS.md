@@ -171,7 +171,7 @@ No Training formula change is required.
 
 Practical remaining polish:
 
-- soak-test `2026.10.0b2` before stable promotion
+- soak-test `2026.10.0b3` before any stable promotion
 - optionally normalize cosmetic whitespace/generic Garmin Gear names
 - decide whether to package the Garmin Fitness banner
 - continue supervised Gear sensor-linking work only through `dev`
