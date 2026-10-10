@@ -325,8 +325,8 @@
           const gearIcon = type.includes('shoe') ? 'mdi:shoe-sneaker'
             : type.includes('bike') ? 'mdi:bike'
               : 'mdi:watch-variant';
-          const name = String(item.name || item.custom_make_model || 'Utrustning').replace(/\\s+/g, ' ').trim();
-          const custom = String(item.custom_make_model || '').replace(/\\s+/g, ' ').trim();
+          const name = String(item.name || item.custom_make_model || 'Utrustning').replace(/\s+/g, ' ').trim();
+          const custom = String(item.custom_make_model || '').replace(/\s+/g, ' ').trim();
           const brand = String(item.brand || '').trim();
           const model = String(item.model || '').trim();
           const description = custom && custom !== name ? custom
