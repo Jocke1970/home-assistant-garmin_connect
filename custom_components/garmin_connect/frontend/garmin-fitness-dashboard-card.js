@@ -1,10 +1,10 @@
-/* Garmin Fitness Dashboard v0.1.1-dev.3 — presentation only.
+/* Garmin Fitness Dashboard v0.1.1-dev.4 — presentation only.
  * Keeps the existing garmin-fitness-card graph as a separate, persistent element.
  * No backend calculations, external libraries or build step.
  */
 (() => {
   'use strict';
-  const VERSION = '0.1.1-dev.3';
+  const VERSION = '0.1.1-dev.4';
   const TAG = 'garmin-fitness-dashboard-card';
   const DEFAULTS = Object.freeze({
     insights: 'sensor.garmin_insights_overview',
