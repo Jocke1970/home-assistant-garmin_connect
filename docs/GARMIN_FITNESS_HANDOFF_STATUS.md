@@ -223,3 +223,9 @@ canonical TRIMP, Load Priority calculations, or Gear history. Keep the
 packaged frontend and `www/garmin_fitness_card/` source copies synchronized.
 Implement on `dev`; verify tests/CI, then promote through `dev → beta → main`.
 Current `2026.10.0b3` remains the HA soak-test baseline.
+
+## ACWR comparison investigation (2026-10-10, dev-only)
+
+HA beta `2026.10.0b3` showed canonical ACWR 1.15 and projected budget ACWR 1.30 while today's canonical, budget-consuming and excluded low-intensity TRIMP all showed zero. The reason is **not yet confirmed**. The budget backend reconstructs a planning history; the canonical ACWR is read from Fitness data. Compare their dates, refresh times, history windows and source values before treating the numbers as an algorithm defect. Do not silently suppress the discrepancy.
+
+On `dev` the dashboard explanatory warning is clarified for the no-exclusions case. The packaged JS and `www` source copy, plus dashboard smoke assertion, are synchronized. This UI text change does not alter TRIMP, ACWR or budget calculations. CI and an actual HA test remain required before a new beta.
