@@ -342,7 +342,7 @@
       if (differing && planningDifference) {
         acwrContext = `<p class="acwr-context">${icon('mdi:information-outline')} Faktisk ACWR ${fmt(currentAcwr, 2)} omfattar dagens verkliga belastning. Budget-ACWR ${fmt(budgetAcwr, 2)} använder ett separat planeringsunderlag där ${fmt(excluded)} TRIMP från lågintensiva pass undantagits. Olika värden är därför förväntade.</p>`;
       } else if (differing) {
-        acwrContext = `<p class="acwr-context caution">${icon('mdi:clock-alert-outline')} Faktisk ACWR ${fmt(currentAcwr, 2)} och budget-ACWR ${fmt(budgetAcwr, 2)} skiljer sig. Kontrollera datatidpunkt och underlag; orsaken är inte fastställd.</p>`;
+        acwrContext = `<p class="acwr-context caution">${icon('mdi:clock-alert-outline')} Faktisk ACWR ${fmt(currentAcwr, 2)} och budget-ACWR ${fmt(budgetAcwr, 2)} skiljer sig trots ${fmt(excluded ?? 0)} TRIMP undantagen lågintensiv belastning i dag. Värdena kommer från faktisk Fitness-historik respektive budgetens planeringsberäkning. Kontrollera att de avser samma dag och uppdateringstillfälle innan skillnaden tolkas.</p>`;
       }
       const diagnostics = a.planning_mode === 'load_priority' &&
         [actual, current, excluded].every((v) => v !== null)
