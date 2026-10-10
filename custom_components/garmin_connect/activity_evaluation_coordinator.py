@@ -81,7 +81,10 @@ class ActivityEvaluationCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if not isinstance(record, dict):
                 continue
             try:
-                record_id = int(record.get("activityId") or record.get("activity_id"))
+                candidate_id = record.get("activityId") or record.get("activity_id")
+                if candidate_id is None:
+                    continue
+                record_id = int(candidate_id)
             except (TypeError, ValueError):
                 continue
             if record_id != activity_id:
