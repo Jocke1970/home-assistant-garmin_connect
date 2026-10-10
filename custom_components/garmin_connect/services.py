@@ -37,6 +37,21 @@ SERVICE_ADD_GEAR_TO_ACTIVITY = "add_gear_to_activity"
 SERVICE_ADD_HYDRATION = "add_hydration"
 SERVICE_ADD_NUTRITION = "add_nutrition_log"
 
+UPLOAD_ACTIVITY_FORMATS = {".fit", ".gpx", ".tcx"}
+
+
+def _upload_path_allowed(hass: HomeAssistant, path: Path) -> bool:
+    """Allow config files or HA-allowlisted paths, resolving symlinks first."""
+    try:
+        resolved = path.resolve(strict=True)
+        config_dir = Path(hass.config.config_dir).resolve()
+        if resolved.is_relative_to(config_dir):
+            return True
+        return bool(hass.config.is_allowed_path(str(resolved)))
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
 # Service schemas
 SET_ACTIVE_GEAR_SCHEMA = vol.Schema(
     {
@@ -330,7 +345,22 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         path = Path(file_path)
         if not path.is_absolute():
             path = Path(hass.config.path(file_path))
-        if not path.is_file():
+        if not await hass.async_add_executor_job(_upload_path_allowed, hass, path):
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="path_not_allowed",
+                translation_placeholders={"file_path": str(path)},
+            )
+        if path.suffix.lower() not in UPLOAD_ACTIVITY_FORMATS:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="unsupported_file_format",
+                translation_placeholders={
+                    "file_path": str(path),
+                    "formats": ", ".join(sorted(UPLOAD_ACTIVITY_FORMATS)),
+                },
+            )
+        if not await hass.async_add_executor_job(path.is_file):
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="file_not_found",

@@ -110,6 +110,29 @@ assert.match(html, /42,0× · gräns 1,5×/);
 assert.match(html, /Senaste aktivitet · Promenad/);
 html = card._evaluationHtml();
 assert.match(html, /Idag · Promenad/);
+snapshot[e.evaluation].attributes.linked_gear = [
+  { gear_uuid: 'gear-1', name: 'Runnershoes', gear_type: 'Shoes',
+    custom_make_model: 'Nike Pegasus' },
+  { gear_uuid: 'gear-2', name: 'Garmin  Fenix 7 Pro', gear_type: 'Other',
+    custom_make_model: 'Garmin Fenix 7 Pro' },
+];
+html = card._evaluationHtml();
+assert.match(html, /Utrustning som användes/);
+assert.match(html, /Nike Pegasus/);
+assert.match(html, /Garmin Fenix 7 Pro/);
+snapshot[e.evaluation].attributes.linked_gear = [
+  { name: '<img src=x onerror=alert(1)>' },
+];
+html = card._evaluationHtml();
+assert.match(html, /&lt;img/);
+assert.doesNotMatch(html, /<img/);
+snapshot[e.evaluation].attributes.linked_gear = [];
+html = card._evaluationHtml();
+assert.match(html, /Ingen kopplad utrustning/);
+delete snapshot[e.evaluation].attributes.linked_gear;
+html = card._evaluationHtml();
+assert.doesNotMatch(html, /Utrustning som användes/);
+
 assert.match(html, /Efter passet \(faktisk belastning\)/);
 assert.doesNotMatch(html, /Undantagen från budgetförbrukning/);
 snapshot[e.budget].attributes.activity_decisions = [{
@@ -120,15 +143,15 @@ assert.match(html, /Undantagen från budgetförbrukning/);
 // A difference without any excluded low-intensity load is not automatically explained.
 snapshot[e.budget].attributes.excluded_low_intensity_load = 0;
 html = card._budgetHtml();
-assert.match(html, /orsaken är inte fastställd/);
+assert.match(html, /Kontrollera att de avser samma dag/);
 assert.doesNotMatch(html, /Olika värden är därför förväntade/);
 snapshot[e.budget].attributes.excluded_low_intensity_load = 63.4;
 // Equal ACWR readings should not show either discrepancy notice.
 snapshot[e.acwr].state = '1.81';
 html = card._budgetHtml();
-assert.doesNotMatch(html, /orsaken är inte fastställd|Olika värden är därför förväntade/);
+assert.doesNotMatch(html, /Kontrollera att de avser samma dag|Olika värden är därför förväntade/);
 snapshot[e.acwr].state = '2.48';
-assert.equal(card.cardVersion, '0.1.1-dev.3');
+assert.equal(card.cardVersion, '0.1.1-dev.4');
 assert.ok(sandbox.window.customCards.some((c) => c.type === 'garmin-fitness-dashboard-card'));
 console.log('PASS: frontend smoke assertions (budget, explanatory ACWR, XSS, insights, selection, evaluation, version)');
 

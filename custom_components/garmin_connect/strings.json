@@ -352,6 +352,7 @@
     "create_activity_failed": { "message": "Failed to create activity: {error}" },
     "download_activity_failed": { "message": "Failed to download activity: {error}" },
     "path_not_allowed": { "message": "Path is not allowed: {file_path}. Add the directory to allowlist_external_dirs." },
+    "unsupported_file_format": { "message": "Unsupported activity file: {file_path}. Accepted formats: {formats}." },
     "entity_not_found": { "message": "Entity not found: {entity_id}" },
     "file_not_found": { "message": "File not found: {file_path}" },
     "gear_uuid_not_found": { "message": "Entity {entity_id} does not have a gear_uuid attribute." },

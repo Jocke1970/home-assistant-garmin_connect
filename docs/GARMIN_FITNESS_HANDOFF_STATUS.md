@@ -1,8 +1,8 @@
 # Garmin Fitness handoff status
 
 > Status: active beta runtime  
-> Updated: 2026-10-07  
-> Home Assistant beta: `2026.10.0b2`  
+> Updated: 2026-10-08  
+> Home Assistant beta: `2026.10.0b3`  
 > `ha-garmin` beta pin: `0703c4cf1df52d5c23d0a34696e4715c497a3e0d`  
 > Release flow: `dev → beta → main`
 
@@ -171,7 +171,83 @@ No Training formula change is required.
 
 Practical remaining polish:
 
-- soak-test `2026.10.0b2` before stable promotion
+- soak-test `2026.10.0b3` before any stable promotion
 - optionally normalize cosmetic whitespace/generic Garmin Gear names
 - decide whether to package the Garmin Fitness banner
 - continue supervised Gear sensor-linking work only through `dev`
+
+## Upcoming development (not released)
+
+The active `dev` branch is being hardened ahead of a future beta. The
+`upload_activity` service now restricts input paths to files within the HA
+configuration directory or paths permitted by `allowlist_external_dirs`.
+Symlinks are resolved before checking permission and only FIT, GPX and TCX
+extensions are accepted. Blocking file checks run in Home Assistant's executor.
+Coverage includes allowed files, external paths, symlink escape, unsupported
+extensions and missing files. The installed `2026.10.0b3` beta is unchanged.
+
+Further planned work: token refresh durability, frontend cache-busting and
+selective upstream integration. These are not part of this hardening change.
+
+## Next gig: Activity Evaluation linked Gear presentation (planned, unreleased)
+
+The activity-linked Gear backend is already canonical in `ha-garmin`, and
+`linked_gear` / `linked_gear_count` were live-verified on **Last Activity**
+with beta `2026.10.0b2`. However, the **Activity Evaluation** sensor does not
+currently expose linked Gear for its selected activity, and the dashboard
+`garmin-fitness-dashboard-card.js` does not render Gear inside Passutvärdering.
+
+Implementation requirements:
+
+1. Resolve Gear against the **selected activity ID** (one of the recent
+   selectable activities), using the existing canonical `ha-garmin` cache.
+   Never reuse Last Activity's Gear unconditionally for historical selections.
+2. Add `linked_gear` and `linked_gear_count` for the selected activity to
+   Activity Evaluation's HA sensor attributes. Do not build a second Gear cache
+   or trigger extra Garmin API requests on every selection.
+3. Render a compact, light/theme-aware premium section **Utrustning (equipment used)**
+   within Passutvärdering, with Gear name, optional custom make/model, and a
+   suitable equipment icon. Escape dynamic strings in JavaScript.
+4. Show an understated empty state where the selected activity genuinely has no
+   linked Gear; distinguish absent/unavailable linkage from confirmed empty Gear
+   when the backend can make that distinction.
+5. Regression-test activity switching (different Gear per activity), historical
+   activity selection, missing metadata, XSS escaping, and no new API/cache work.
+   Keep the existing graph card instance persistent on HA state refreshes.
+6. Rename or clarify **Efter passet (faktisk belastning)**: historical ACWR,
+   Strain and TSB come from an activity-day snapshot, not necessarily a value
+   measured immediately after the selected workout.
+
+Boundaries: presentation and a narrow data handoff only; no changes to
+canonical TRIMP, Load Priority calculations, or Gear history. Keep the
+packaged frontend and `www/garmin_fitness_card/` source copies synchronized.
+Implement on `dev`; verify tests/CI, then promote through `dev → beta → main`.
+Current `2026.10.0b3` remains the HA soak-test baseline.
+
+## ACWR comparison investigation (2026-10-10, dev-only)
+
+HA beta `2026.10.0b3` showed canonical ACWR 1.15 and projected budget ACWR 1.30 while today's canonical, budget-consuming and excluded low-intensity TRIMP all showed zero. The reason is **not yet confirmed**. The budget backend reconstructs a planning history; the canonical ACWR is read from Fitness data. Compare their dates, refresh times, history windows and source values before treating the numbers as an algorithm defect. Do not silently suppress the discrepancy.
+
+On `dev` the dashboard explanatory warning is clarified for the no-exclusions case. The packaged JS and `www` source copy, plus dashboard smoke assertion, are synchronized. This UI text change does not alter TRIMP, ACWR or budget calculations. CI and an actual HA test remain required before a new beta.
+
+## Selected-activity Gear UI: implementation in dev (unreleased)
+
+The dashboard now has a compact `Utrustning (equipment used)` section driven by
+`sensor.garmin_activity_evaluation.linked_gear`. The HA evaluation adapter
+only copies Gear from an existing Activity coordinator record whose
+`activityId` matches the selected pass. It checks `lastActivity` and
+`lastActivities` already in memory and makes **no additional Garmin API
+request**. Missing Gear metadata remains `null` (unknown, section hidden);
+a known empty `linked_gear: []` displays an explicit empty state. The
+historic ACWR/Strain/TSB section is now labeled `Belastning för passets
+kalenderdag`.
+
+Limitations to verify in real HA: Garmin may only populate `linked_gear`
+for `lastActivity`, not all `lastActivities`. In that case older selected
+activities will correctly show no Gear rather than borrowing Gear from
+another workout. Expanding the canonical ha-garmin activity/Gear cache for
+older activity IDs is a separate follow-up and must not duplicate caches.
+
+Packaged/source JS copies and smoke assertions have been updated. CI,
+end-to-end HA verification, and any future promotion to beta are pending.
+The installed `2026.10.0b3` remains unchanged.

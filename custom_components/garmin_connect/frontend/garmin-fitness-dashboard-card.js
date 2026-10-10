@@ -1,10 +1,10 @@
-/* Garmin Fitness Dashboard v0.1.1-dev.3 — presentation only.
+/* Garmin Fitness Dashboard v0.1.1-dev.4 — presentation only.
  * Keeps the existing garmin-fitness-card graph as a separate, persistent element.
  * No backend calculations, external libraries or build step.
  */
 (() => {
   'use strict';
-  const VERSION = '0.1.1-dev.3';
+  const VERSION = '0.1.1-dev.4';
   const TAG = 'garmin-fitness-dashboard-card';
   const DEFAULTS = Object.freeze({
     insights: 'sensor.garmin_insights_overview',
@@ -313,6 +313,28 @@
       }).join('')}</div>`;
     }
 
+    _gearHtml(activity) {
+      // Linked Gear must belong to the selected activity, not to Last Activity.
+      const gear = Array.isArray(activity?.linked_gear) ? activity.linked_gear : null;
+      if (gear === null) return '';
+      const items = gear.filter((item) => item && typeof item === 'object');
+      if (!items.length) return '<div class="mini-title">Utrustning som användes</div><p class="small">Ingen kopplad utrustning för valt pass.</p>';
+      return `<div class="mini-title">Utrustning som användes</div>
+        <div class="gear-items">${items.map((item) => {
+          const type = String(item.gear_type || '').toLowerCase();
+          const gearIcon = type.includes('shoe') ? 'mdi:shoe-sneaker'
+            : type.includes('bike') ? 'mdi:bike'
+              : 'mdi:watch-variant';
+          const name = String(item.name || item.custom_make_model || 'Utrustning').replace(/\s+/g, ' ').trim();
+          const custom = String(item.custom_make_model || '').replace(/\s+/g, ' ').trim();
+          const brand = String(item.brand || '').trim();
+          const model = String(item.model || '').trim();
+          const description = custom && custom !== name ? custom
+            : [brand, model].filter((v) => v && v.toLowerCase() !== 'other' && !v.toLowerCase().startsWith('unknown')).join(' ');
+          return `<div class="gear-item">${icon(gearIcon)}<div><strong>${esc(name)}</strong>${description ? `<span>${esc(description)}</span>` : ''}</div></div>`;
+        }).join('')}</div>`;
+    }
+
     _budgetHtml() {
       const s = this._state('budget');
       if (!isPresent(s)) return this._panel('mdi:gauge', 'Dagens träningsbudget', 'Väntar på aktuell budgetsensor.');
@@ -342,7 +364,7 @@
       if (differing && planningDifference) {
         acwrContext = `<p class="acwr-context">${icon('mdi:information-outline')} Faktisk ACWR ${fmt(currentAcwr, 2)} omfattar dagens verkliga belastning. Budget-ACWR ${fmt(budgetAcwr, 2)} använder ett separat planeringsunderlag där ${fmt(excluded)} TRIMP från lågintensiva pass undantagits. Olika värden är därför förväntade.</p>`;
       } else if (differing) {
-        acwrContext = `<p class="acwr-context caution">${icon('mdi:clock-alert-outline')} Faktisk ACWR ${fmt(currentAcwr, 2)} och budget-ACWR ${fmt(budgetAcwr, 2)} skiljer sig. Kontrollera datatidpunkt och underlag; orsaken är inte fastställd.</p>`;
+        acwrContext = `<p class="acwr-context caution">${icon('mdi:clock-alert-outline')} Faktisk ACWR ${fmt(currentAcwr, 2)} och budget-ACWR ${fmt(budgetAcwr, 2)} skiljer sig trots ${fmt(excluded ?? 0)} TRIMP undantagen lågintensiv belastning i dag. Värdena kommer från faktisk Fitness-historik respektive budgetens planeringsberäkning. Kontrollera att de avser samma dag och uppdateringstillfälle innan skillnaden tolkas.</p>`;
       }
       const diagnostics = a.planning_mode === 'load_priority' &&
         [actual, current, excluded].every((v) => v !== null)
@@ -407,13 +429,13 @@
           <div><strong>${esc(a.activity_name || 'Aktivitet')}</strong>
           <span>${maybe(a.duration_minutes, ' min')} · Load ${fmt(a.garmin_training_load)} · TE ${fmt(a.aerobic_training_effect)} / ${fmt(a.anaerobic_training_effect)}</span></div></div>
         <div class="assessment"><strong>${esc(a.title || 'Ingen bedömning')}</strong><p>${esc(message)}</p></div>
-        ${source}<div class="mini-title">Passdata</div><div class="metrics ${power ? 'two' : 'one'}">
+        ${source}${this._gearHtml(a)}<div class="mini-title">Passdata</div><div class="metrics ${power ? 'two' : 'one'}">
           ${this._metric('Puls', `${fmt(a.avg_hr, 0)} / ${fmt(a.max_hr, 0)} bpm`)}
           ${power ? this._metric('Effekt', `${maybe(a.avg_power, ' W', 0)} / ${maybe(a.normalized_power, ' W NP', 0)}`) : ''}</div>
         ${performances ? `<div class="mini-title">Beräknad prestation</div><div class="metrics three">
           ${this._metric('VO₂max', fmt(a.estimated_vo2max))}${this._metric('FTP', maybe(a.estimated_ftp_watts, ' W', 0))}
           ${this._metric('Säkerhet', a.confidence_label || '–')}</div>` : ''}
-        ${post ? `<div class="mini-title">Efter passet (faktisk belastning)</div><div class="metrics three">
+        ${post ? `<div class="mini-title">Belastning för passets kalenderdag</div><div class="metrics three">
           ${this._metric('ACWR', fmt(a.post_acwr, 2))}${this._metric('Strain', fmt(a.post_strain))}
           ${this._metric('TSB', signed(a.post_tsb))}</div>` : ''}
       </div>`;
@@ -435,6 +457,7 @@
         .focus-legend{min-width:150px;display:grid;gap:5px}.focus-legend-row{display:grid;grid-template-columns:9px 1fr auto;gap:7px;align-items:center;font-size:11px}.focus-legend-row i{width:8px;height:8px;border-radius:50%;background:var(--secondary-text-color)}.focus-legend-row i.low{background:var(--info-color,#00bceb)}.focus-legend-row i.high{background:var(--warning-color,#ff9800)}.focus-legend-row i.anaerobic{background:var(--error-color,#f44336)}.focus-legend-row span{color:var(--secondary-text-color)}.focus-legend-row strong{font-size:11px}
         .focus-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-top:10px}.focus-meta span{font-size:10px;color:var(--secondary-text-color);line-height:1.35}.focus-meta strong{display:block;font-size:12px;color:var(--primary-text-color)}
         .recovery-detail{display:grid;gap:10px}.recovery-meter-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;font-size:10px}.recovery-meter-head span{color:var(--secondary-text-color);text-align:left}.recovery-meter-head strong{font-size:11px;text-align:right;white-space:nowrap}.evidence-track{height:6px;margin-top:5px;border-radius:99px;background:rgba(128,128,128,.20);overflow:hidden}.evidence-track>div{height:100%;border-radius:99px;background:var(--warning-color,#ff9800)}
+        .gear-items{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px;margin-top:8px}.gear-item{display:flex;gap:8px;align-items:center;border:1px solid var(--divider-color,#ddd);border-radius:10px;padding:9px;min-width:0;background:var(--secondary-background-color,var(--card-background-color,#fff))}.gear-item ha-icon{--mdc-icon-size:20px;color:var(--info-color,#00bceb)}.gear-item strong,.gear-item span{display:block;overflow-wrap:anywhere}.gear-item strong{font-size:12px}.gear-item span{font-size:10px;color:var(--secondary-text-color);margin-top:3px}
         .quality{display:flex;gap:9px;align-items:flex-start;padding:8px 13px;color:var(--warning-color,#b58900);border-bottom:1px solid var(--divider-color,#ddd)}
         .quality strong{display:block;font-size:12px}.quality span{display:block;font-size:11px;color:var(--secondary-text-color);margin-top:2px}
         .recent,.notice{display:flex;gap:11px;align-items:center;padding:12px 14px}.recent{cursor:pointer}.recent>ha-icon{color:var(--info-color,#03a9f4)}

@@ -1,6 +1,6 @@
 # Garmin Insights — Home Assistant handoff
 
-**Status:** active beta runtime in `2026.10.0b2`  
+**Status:** active beta runtime in `2026.10.0b3`  
 **Updated:** 2026-10-07  
 **Scope:** exact-date snapshot orchestration, one overview sensor, localized presentation, and priority-aware Daily Load Budget handoff
 

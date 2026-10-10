@@ -29,6 +29,25 @@ The integration provides **130+ sensors** across the following categories:
 
 ![screenshot](https://github.com/cyberjunky/home-assistant-garmin_connect/blob/main/screenshots/garmin_connect.png?raw=true "Screenshot Garmin Connect")
 
+## Fork development status (2026-10-08)
+
+This fork follows the release flow `dev → beta → main`. The active Home Assistant
+test release is `2026.10.0b3`. It includes Garmin Fitness algorithm v2,
+Load Priority policy v2, activity-linked Gear, and the packaged Fitness frontend.
+
+**Unreleased on dev:** `upload_activity` now accepts only FIT, GPX and TCX
+files, and validates the resolved file path against the Home Assistant configuration
+directory or `allowlist_external_dirs` before upload. Symlink escapes outside
+allowed directories are rejected. Blocking file checks run in the executor.
+The corresponding service tests and error translations were updated.
+
+These upload restrictions are NOT part of `2026.10.0b3`. Upcoming work includes
+token-persistence hardening and frontend cache handling; neither is released yet.
+The `main` branch remains unchanged.
+
+For the detailed handoff, see
+[Garmin Fitness handoff status](docs/GARMIN_FITNESS_HANDOFF_STATUS.md).
+
 ## Prerequisites
 
 - A [Garmin Connect](https://connect.garmin.com/) account

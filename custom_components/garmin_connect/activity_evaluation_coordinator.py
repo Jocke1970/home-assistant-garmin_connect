@@ -50,6 +50,7 @@ class ActivityEvaluationCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         client: GarminClient,
         fitness: FitnessCoordinator,
         body: Any,
+        activity: Any = None,
     ) -> None:
         """Initialize recent-activity evaluation around existing coordinators."""
         super().__init__(
@@ -62,8 +63,36 @@ class ActivityEvaluationCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.client = client
         self.fitness = fitness
         self.body = body
+        self.activity = activity
         self._detail_cache: dict[int, tuple[ActivityDetailSample, ...]] = {}
         self._selected_activity_id: int | None = None
+
+    def _linked_gear_for_activity(self, activity_id: int) -> list[dict[str, Any]] | None:
+        """Read linked Gear only when the cached Garmin record matches this ID.
+
+        None means unknown/unavailable, not a confirmed empty Gear association.
+        Never copy Gear from the latest activity to another selected activity.
+        """
+        data = getattr(self.activity, "data", None) or {}
+        if not isinstance(data, dict):
+            return None
+        records = [data.get("lastActivity"), *(data.get("lastActivities") or [])]
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            try:
+                candidate_id = record.get("activityId") or record.get("activity_id")
+                if candidate_id is None:
+                    continue
+                record_id = int(candidate_id)
+            except (TypeError, ValueError):
+                continue
+            if record_id != activity_id:
+                continue
+            gear = record.get("linked_gear")
+            if isinstance(gear, list):
+                return [item for item in gear if isinstance(item, dict)]
+        return None
 
     @property
     def selected_activity_id(self) -> int | None:
@@ -188,6 +217,9 @@ class ActivityEvaluationCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
                 serialized = asdict(evaluated)
                 serialized.update(self._post_context(evaluated.calendar_date))
+                serialized["linked_gear"] = self._linked_gear_for_activity(
+                    int(evaluated.activity_id)
+                )
                 serialized["detail_sample_count"] = len(samples)
                 evaluations.append(serialized)
         except GarminAuthError as err:
