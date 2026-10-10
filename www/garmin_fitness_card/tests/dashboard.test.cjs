@@ -110,6 +110,29 @@ assert.match(html, /42,0× · gräns 1,5×/);
 assert.match(html, /Senaste aktivitet · Promenad/);
 html = card._evaluationHtml();
 assert.match(html, /Idag · Promenad/);
+snapshot[e.evaluation].attributes.linked_gear = [
+  { gear_uuid: 'gear-1', name: 'Runnershoes', gear_type: 'Shoes',
+    custom_make_model: 'Nike Pegasus' },
+  { gear_uuid: 'gear-2', name: 'Garmin  Fenix 7 Pro', gear_type: 'Other',
+    custom_make_model: 'Garmin Fenix 7 Pro' },
+];
+html = card._evaluationHtml();
+assert.match(html, /Utrustning som användes/);
+assert.match(html, /Nike Pegasus/);
+assert.match(html, /Garmin Fenix 7 Pro/);
+snapshot[e.evaluation].attributes.linked_gear = [
+  { name: '<img src=x onerror=alert(1)>' },
+];
+html = card._evaluationHtml();
+assert.match(html, /&lt;img/);
+assert.doesNotMatch(html, /<img/);
+snapshot[e.evaluation].attributes.linked_gear = [];
+html = card._evaluationHtml();
+assert.match(html, /Ingen kopplad utrustning/);
+delete snapshot[e.evaluation].attributes.linked_gear;
+html = card._evaluationHtml();
+assert.doesNotMatch(html, /Utrustning som användes/);
+
 assert.match(html, /Efter passet \(faktisk belastning\)/);
 assert.doesNotMatch(html, /Undantagen från budgetförbrukning/);
 snapshot[e.budget].attributes.activity_decisions = [{
