@@ -205,7 +205,7 @@ Implementation requirements:
 2. Add `linked_gear` and `linked_gear_count` for the selected activity to
    Activity Evaluation's HA sensor attributes. Do not build a second Gear cache
    or trigger extra Garmin API requests on every selection.
-3. Render a compact, light/theme-aware premium section **Utrustning som användes**
+3. Render a compact, light/theme-aware premium section **Utrustning (equipment used)**
    within Passutvärdering, with Gear name, optional custom make/model, and a
    suitable equipment icon. Escape dynamic strings in JavaScript.
 4. Show an understated empty state where the selected activity genuinely has no
@@ -232,7 +232,7 @@ On `dev` the dashboard explanatory warning is clarified for the no-exclusions ca
 
 ## Selected-activity Gear UI: implementation in dev (unreleased)
 
-The dashboard now has a compact `Utrustning som användes` section driven by
+The dashboard now has a compact `Utrustning (equipment used)` section driven by
 `sensor.garmin_activity_evaluation.linked_gear`. The HA evaluation adapter
 only copies Gear from an existing Activity coordinator record whose
 `activityId` matches the selected pass. It checks `lastActivity` and
