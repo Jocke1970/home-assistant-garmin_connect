@@ -229,3 +229,25 @@ Current `2026.10.0b3` remains the HA soak-test baseline.
 HA beta `2026.10.0b3` showed canonical ACWR 1.15 and projected budget ACWR 1.30 while today's canonical, budget-consuming and excluded low-intensity TRIMP all showed zero. The reason is **not yet confirmed**. The budget backend reconstructs a planning history; the canonical ACWR is read from Fitness data. Compare their dates, refresh times, history windows and source values before treating the numbers as an algorithm defect. Do not silently suppress the discrepancy.
 
 On `dev` the dashboard explanatory warning is clarified for the no-exclusions case. The packaged JS and `www` source copy, plus dashboard smoke assertion, are synchronized. This UI text change does not alter TRIMP, ACWR or budget calculations. CI and an actual HA test remain required before a new beta.
+
+## Selected-activity Gear UI: implementation in dev (unreleased)
+
+The dashboard now has a compact `Utrustning som användes` section driven by
+`sensor.garmin_activity_evaluation.linked_gear`. The HA evaluation adapter
+only copies Gear from an existing Activity coordinator record whose
+`activityId` matches the selected pass. It checks `lastActivity` and
+`lastActivities` already in memory and makes **no additional Garmin API
+request**. Missing Gear metadata remains `null` (unknown, section hidden);
+a known empty `linked_gear: []` displays an explicit empty state. The
+historic ACWR/Strain/TSB section is now labeled `Belastning för passets
+kalenderdag`.
+
+Limitations to verify in real HA: Garmin may only populate `linked_gear`
+for `lastActivity`, not all `lastActivities`. In that case older selected
+activities will correctly show no Gear rather than borrowing Gear from
+another workout. Expanding the canonical ha-garmin activity/Gear cache for
+older activity IDs is a separate follow-up and must not duplicate caches.
+
+Packaged/source JS copies and smoke assertions have been updated. CI,
+end-to-end HA verification, and any future promotion to beta are pending.
+The installed `2026.10.0b3` remains unchanged.
