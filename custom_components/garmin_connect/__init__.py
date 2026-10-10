@@ -220,6 +220,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: GarminConnectConfigEntry
         client,
         fitness,
         coordinators.body,
+        coordinators.activity,
     )
     insights = InsightsCoordinator(hass, entry, client, fitness)
 
