@@ -120,13 +120,13 @@ assert.match(html, /Undantagen från budgetförbrukning/);
 // A difference without any excluded low-intensity load is not automatically explained.
 snapshot[e.budget].attributes.excluded_low_intensity_load = 0;
 html = card._budgetHtml();
-assert.match(html, /orsaken är inte fastställd/);
+assert.match(html, /Kontrollera att de avser samma dag/);
 assert.doesNotMatch(html, /Olika värden är därför förväntade/);
 snapshot[e.budget].attributes.excluded_low_intensity_load = 63.4;
 // Equal ACWR readings should not show either discrepancy notice.
 snapshot[e.acwr].state = '1.81';
 html = card._budgetHtml();
-assert.doesNotMatch(html, /orsaken är inte fastställd|Olika värden är därför förväntade/);
+assert.doesNotMatch(html, /Kontrollera att de avser samma dag|Olika värden är därför förväntade/);
 snapshot[e.acwr].state = '2.48';
 assert.equal(card.cardVersion, '0.1.1-dev.3');
 assert.ok(sandbox.window.customCards.some((c) => c.type === 'garmin-fitness-dashboard-card'));
