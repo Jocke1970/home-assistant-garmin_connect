@@ -151,7 +151,7 @@ snapshot[e.acwr].state = '1.81';
 html = card._budgetHtml();
 assert.doesNotMatch(html, /Kontrollera att de avser samma dag|Olika värden är därför förväntade/);
 snapshot[e.acwr].state = '2.48';
-assert.equal(card.cardVersion, '0.1.1-dev.3');
+assert.equal(card.cardVersion, '0.1.1-dev.4');
 assert.ok(sandbox.window.customCards.some((c) => c.type === 'garmin-fitness-dashboard-card'));
 console.log('PASS: frontend smoke assertions (budget, explanatory ACWR, XSS, insights, selection, evaluation, version)');
 
