@@ -296,3 +296,45 @@ def test_activity_evaluation_sensor_exposes_localized_selected_pass() -> None:
     assert attrs["max_hr"] == 154.0
     assert attrs["user_max_hr"] == 195.0
     assert attrs["post_acwr"] == 0.57
+
+
+def test_linked_gear_is_scoped_to_selected_activity() -> None:
+    """Never show the latest activity Gear for another selected workout."""
+    activity = SimpleNamespace(data={
+        "lastActivity": {"activityId": 123, "linked_gear": [
+            {"gear_uuid": "shoe-1", "name": "Nike Pegasus"},
+        ]},
+        "lastActivities": [
+            {"activityId": 122, "linked_gear": [{"name": "Road bike"}]},
+        ],
+    })
+    coordinator = ActivityEvaluationCoordinator(
+        MagicMock(), _entry(), MagicMock(), _fitness(()), MagicMock(), activity
+    )
+    assert coordinator._linked_gear_for_activity(123) == [
+        {"gear_uuid": "shoe-1", "name": "Nike Pegasus"}
+    ]
+    assert coordinator._linked_gear_for_activity(122) == [{"name": "Road bike"}]
+    assert coordinator._linked_gear_for_activity(121) is None
+    activity.data["lastActivity"]["linked_gear"] = []
+    assert coordinator._linked_gear_for_activity(123) == []
+
+
+def test_selected_evaluation_sensor_exposes_gear() -> None:
+    coordinator = MagicMock()
+    coordinator.hass.config.language = "sv-SE"
+    coordinator.last_update_success = True
+    coordinator.data = {
+        "ready": True,
+        "selected_activity_id": 123,
+        "selected_evaluation": {
+            "activity_id": 123,
+            "activity_type": "walking",
+            "assessment_id": "aerobic",
+            "linked_gear": [{"name": "Nike Pegasus", "gear_uuid": "shoe-1"}],
+        },
+    }
+    sensor = GarminActivityEvaluationSensor(coordinator, "entry_1")
+    attrs = sensor.extra_state_attributes
+    assert attrs["linked_gear_count"] == 1
+    assert attrs["linked_gear"][0]["gear_uuid"] == "shoe-1"
