@@ -132,6 +132,8 @@ class GarminActivityEvaluationSensor(
             "status": data.get("status"),
             "evaluation_count": data.get("evaluation_count", 0),
             "selected_activity_id": data.get("selected_activity_id"),
+            "linked_gear": selected.get("linked_gear"),
+            "linked_gear_count": len(selected["linked_gear"]) if isinstance(selected.get("linked_gear"), list) else None,
             "body_weight_kg": data.get("body_weight_kg"),
             "user_max_hr": data.get("max_hr"),
             "evaluation_limit": data.get("limit"),
